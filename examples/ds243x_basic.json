@@ -1,0 +1,18 @@
+{
+  "samplerate": 2000000,
+  "protocols": [
+    { "id": "ow0", "type": "onewire", "operations": [] },
+    {
+      "id": "ee0", "type": "ds243x", "stack_on": "ow0",
+      "operations": [
+        { "op": "write_memory", "address": 16, "data": [170, 187] },
+        { "op": "read_memory", "address": 32, "data": [1, 2, 3] }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/ds243x_basic.svg" },
+    { "type": "sigrok", "path": "output/ds243x_basic.sr" },
+    { "type": "vcd", "path": "output/ds243x_basic.vcd" }
+  ]
+}

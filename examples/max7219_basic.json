@@ -1,0 +1,18 @@
+{
+  "samplerate": 10000000,
+  "protocols": [
+    { "id": "spi0", "type": "spi", "params": { "clock_hz": 1000000, "width": 1, "mode": 0 }, "operations": [] },
+    {
+      "id": "disp0", "type": "max7219", "stack_on": "spi0",
+      "operations": [
+        { "op": "init", "intensity": 8 },
+        { "op": "set_digit", "position": 0, "value": 7 }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/max7219_basic.svg" },
+    { "type": "sigrok", "path": "output/max7219_basic.sr" },
+    { "type": "vcd", "path": "output/max7219_basic.vcd" }
+  ]
+}

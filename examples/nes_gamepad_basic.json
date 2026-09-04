@@ -1,0 +1,16 @@
+{
+  "samplerate": 1000000,
+  "protocols": [
+    {
+      "id": "nes0", "type": "nes_gamepad",
+      "operations": [
+        { "op": "read_buttons", "buttons": { "A": true, "Start": true } }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/nes_gamepad_basic.svg" },
+    { "type": "sigrok", "path": "output/nes_gamepad_basic.sr" },
+    { "type": "vcd", "path": "output/nes_gamepad_basic.vcd" }
+  ]
+}

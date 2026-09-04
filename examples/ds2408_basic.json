@@ -1,0 +1,18 @@
+{
+  "samplerate": 2000000,
+  "protocols": [
+    { "id": "ow0", "type": "onewire", "operations": [] },
+    {
+      "id": "ds0", "type": "ds2408", "stack_on": "ow0",
+      "operations": [
+        { "op": "write_pio", "bits": 240 },
+        { "op": "read_pio", "state": 170 }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/ds2408_basic.svg" },
+    { "type": "sigrok", "path": "output/ds2408_basic.sr" },
+    { "type": "vcd", "path": "output/ds2408_basic.vcd" }
+  ]
+}

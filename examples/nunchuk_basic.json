@@ -1,0 +1,18 @@
+{
+  "samplerate": 4000000,
+  "protocols": [
+    { "id": "i2c0", "type": "i2c", "params": { "clock_hz": 100000, "addr_bits": 7 }, "operations": [] },
+    {
+      "id": "nc0", "type": "nunchuk", "stack_on": "i2c0",
+      "operations": [
+        { "op": "init" },
+        { "op": "poll", "joystick": [128, 130], "accel": [300, 310, 320], "button_z": true, "button_c": false }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/nunchuk_basic.svg" },
+    { "type": "sigrok", "path": "output/nunchuk_basic.sr" },
+    { "type": "vcd", "path": "output/nunchuk_basic.vcd" }
+  ]
+}

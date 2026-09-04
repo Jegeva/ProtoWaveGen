@@ -1,0 +1,18 @@
+{
+  "samplerate": 4000000,
+  "protocols": [
+    { "id": "i2c0", "type": "i2c", "params": { "clock_hz": 100000, "addr_bits": 7 }, "operations": [] },
+    {
+      "id": "ee0", "type": "eeprom_24xx", "stack_on": "i2c0", "params": { "address": 80, "addr_width": 1 },
+      "operations": [
+        { "op": "write_byte", "word_addr": 16, "value": 171 },
+        { "op": "read_sequential", "word_addr": 32, "values": [17, 34, 51] }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/eeprom_24xx_basic.svg" },
+    { "type": "sigrok", "path": "output/eeprom_24xx_basic.sr" },
+    { "type": "vcd", "path": "output/eeprom_24xx_basic.vcd" }
+  ]
+}

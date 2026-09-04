@@ -1,0 +1,18 @@
+{
+  "samplerate": 4000000,
+  "protocols": [
+    { "id": "i2c0", "type": "i2c", "params": { "clock_hz": 100000, "addr_bits": 7 }, "operations": [] },
+    {
+      "id": "lm75_0", "type": "lm75", "stack_on": "i2c0", "params": { "address": 72 },
+      "operations": [
+        { "op": "read_temperature", "celsius": 23.5 },
+        { "op": "read_temperature", "celsius": 24.0 }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/lm75_basic.svg" },
+    { "type": "sigrok", "path": "output/lm75_basic.sr" },
+    { "type": "vcd", "path": "output/lm75_basic.vcd" }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "samplerate": 8000000,
+  "protocols": [
+    {
+      "id": "spi0",
+      "type": "spi",
+      "params": { "clock_hz": 1000000, "width": 1, "mode": 0 },
+      "operations": []
+    },
+    {
+      "id": "cfi0",
+      "type": "jedec_cfi",
+      "stack_on": "spi0",
+      "operations": [
+        { "op": "read_jedec_id", "manufacturer_id": 239, "memory_type": 64, "capacity": 24 },
+        { "op": "read", "address": 4660, "data": [222, 173, 190, 239] }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/jedec_cfi_basic.svg" },
+    { "type": "sigrok", "path": "output/jedec_cfi_basic.sr" },
+    { "type": "vcd", "path": "output/jedec_cfi_basic.vcd" }
+  ]
+}

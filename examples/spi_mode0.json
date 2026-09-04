@@ -1,0 +1,18 @@
+{
+  "samplerate": 8000000,
+  "protocols": [
+    {
+      "id": "spi0",
+      "type": "spi",
+      "params": { "clock_hz": 1000000, "width": 1, "mode": 0, "bit_order": "msb" },
+      "operations": [
+        { "op": "transfer", "mosi": [155, 1, 2], "miso": [0, 0, 200] }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/spi_mode0.svg" },
+    { "type": "sigrok", "path": "output/spi_mode0.sr" },
+    { "type": "vcd", "path": "output/spi_mode0.vcd" }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "samplerate": 1000000,
+  "protocols": [
+    {
+      "id": "ps2_0", "type": "ps2",
+      "operations": [
+        { "op": "send_from_device", "byte": 28 }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/ps2_basic.svg" },
+    { "type": "sigrok", "path": "output/ps2_basic.sr" },
+    { "type": "vcd", "path": "output/ps2_basic.vcd" }
+  ]
+}

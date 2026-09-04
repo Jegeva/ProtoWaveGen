@@ -1,0 +1,17 @@
+{
+  "samplerate": 12000,
+  "protocols": [
+    {
+      "id": "dali0", "type": "dali",
+      "operations": [
+        { "op": "send_forward_frame", "address": 1, "command": 254 },
+        { "op": "send_backward_frame", "answer": 255 }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/dali_basic.svg" },
+    { "type": "sigrok", "path": "output/dali_basic.sr" },
+    { "type": "vcd", "path": "output/dali_basic.vcd" }
+  ]
+}

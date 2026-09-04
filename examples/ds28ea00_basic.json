@@ -1,0 +1,17 @@
+{
+  "samplerate": 2000000,
+  "protocols": [
+    { "id": "ow0", "type": "onewire", "operations": [] },
+    {
+      "id": "temp0", "type": "ds28ea00", "stack_on": "ow0", "params": { "conversion_delay_us": 1000 },
+      "operations": [
+        { "op": "read_temperature", "celsius": 23.5 }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/ds28ea00_basic.svg" },
+    { "type": "sigrok", "path": "output/ds28ea00_basic.sr" },
+    { "type": "vcd", "path": "output/ds28ea00_basic.vcd" }
+  ]
+}

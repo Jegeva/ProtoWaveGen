@@ -1,0 +1,18 @@
+{
+  "samplerate": 4000000,
+  "protocols": [
+    { "id": "i2c0", "type": "i2c", "params": { "clock_hz": 100000, "addr_bits": 7 }, "operations": [] },
+    {
+      "id": "mlx0", "type": "mlx90614", "stack_on": "i2c0",
+      "operations": [
+        { "op": "read_ambient_temperature", "celsius": 22.0 },
+        { "op": "read_object_temperature", "celsius": 36.5, "source": 1 }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/mlx90614_basic.svg" },
+    { "type": "sigrok", "path": "output/mlx90614_basic.sr" },
+    { "type": "vcd", "path": "output/mlx90614_basic.vcd" }
+  ]
+}

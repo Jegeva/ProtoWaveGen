@@ -1,0 +1,16 @@
+{
+  "samplerate": 1000000,
+  "protocols": [
+    {
+      "id": "wg0", "type": "wiegand",
+      "operations": [
+        { "op": "send_card_26bit", "facility_code": 12, "card_number": 34567 }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/wiegand_basic.svg" },
+    { "type": "sigrok", "path": "output/wiegand_basic.sr" },
+    { "type": "vcd", "path": "output/wiegand_basic.vcd" }
+  ]
+}

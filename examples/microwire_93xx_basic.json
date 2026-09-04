@@ -1,0 +1,18 @@
+{
+  "samplerate": 10000000,
+  "protocols": [
+    { "id": "mw0", "type": "microwire", "params": { "clock_hz": 1000000 }, "operations": [] },
+    {
+      "id": "ee0", "type": "microwire_93xx", "stack_on": "mw0", "params": { "addr_bits": 6 },
+      "operations": [
+        { "op": "write", "address": 1, "value": 4660 },
+        { "op": "read", "address": 5, "value": 43981 }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/microwire_93xx_basic.svg" },
+    { "type": "sigrok", "path": "output/microwire_93xx_basic.sr" },
+    { "type": "vcd", "path": "output/microwire_93xx_basic.vcd" }
+  ]
+}

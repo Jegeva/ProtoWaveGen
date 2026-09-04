@@ -1,0 +1,24 @@
+{
+  "samplerate": 1000000,
+  "protocols": [
+    {
+      "id": "lin_uart",
+      "type": "uart",
+      "params": { "baudrate": 19200, "duplex": "half" },
+      "operations": []
+    },
+    {
+      "id": "lin0",
+      "type": "lin",
+      "stack_on": "lin_uart",
+      "operations": [
+        { "op": "send_frame", "frame_id": 16, "data": [1, 2, 3], "checksum": "enhanced" }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/lin_basic.svg" },
+    { "type": "sigrok", "path": "output/lin_basic.sr" },
+    { "type": "vcd", "path": "output/lin_basic.vcd" }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "samplerate": 2000000,
+  "protocols": [
+    {
+      "id": "ow0",
+      "type": "onewire",
+      "operations": [
+        { "op": "reset" },
+        { "op": "write", "data": [204, 68] },
+        { "op": "read", "data": [40, 1, 79] }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/onewire_basic.svg" },
+    { "type": "sigrok", "path": "output/onewire_basic.sr" },
+    { "type": "vcd", "path": "output/onewire_basic.vcd" }
+  ]
+}

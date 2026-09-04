@@ -1,0 +1,18 @@
+{
+  "samplerate": 8000000,
+  "protocols": [
+    {
+      "id": "can0",
+      "type": "can",
+      "params": { "bitrate": 500000 },
+      "operations": [
+        { "op": "send", "identifier": 291, "data": [222, 173, 190, 239] }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/can_basic.svg" },
+    { "type": "sigrok", "path": "output/can_basic.sr" },
+    { "type": "vcd", "path": "output/can_basic.vcd" }
+  ]
+}

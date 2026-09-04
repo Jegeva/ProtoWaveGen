@@ -1,0 +1,18 @@
+{
+  "samplerate": 4000000,
+  "protocols": [
+    { "id": "i2c0", "type": "i2c", "params": { "clock_hz": 100000, "addr_bits": 7 }, "operations": [] },
+    {
+      "id": "acc0", "type": "adxl345", "stack_on": "i2c0",
+      "operations": [
+        { "op": "enable_measurement" },
+        { "op": "read_acceleration", "x": 100, "y": -50, "z": 250 }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/adxl345_basic.svg" },
+    { "type": "sigrok", "path": "output/adxl345_basic.sr" },
+    { "type": "vcd", "path": "output/adxl345_basic.vcd" }
+  ]
+}

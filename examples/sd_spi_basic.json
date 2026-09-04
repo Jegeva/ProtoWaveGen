@@ -1,0 +1,18 @@
+{
+  "samplerate": 10000000,
+  "protocols": [
+    { "id": "spi0", "type": "spi", "params": { "clock_hz": 1000000, "width": 1, "mode": 0 }, "operations": [] },
+    {
+      "id": "sd0", "type": "sd_spi", "stack_on": "spi0",
+      "operations": [
+        { "op": "init" },
+        { "op": "read_block", "address": 4096, "data": [222, 173, 190, 239] }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/sd_spi_basic.svg" },
+    { "type": "sigrok", "path": "output/sd_spi_basic.sr" },
+    { "type": "vcd", "path": "output/sd_spi_basic.vcd" }
+  ]
+}

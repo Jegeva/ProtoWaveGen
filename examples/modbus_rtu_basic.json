@@ -1,0 +1,18 @@
+{
+  "samplerate": 1000000,
+  "protocols": [
+    { "id": "uart0", "type": "uart", "params": { "baudrate": 19200 }, "operations": [] },
+    {
+      "id": "modbus0", "type": "modbus_rtu", "stack_on": "uart0",
+      "operations": [
+        { "op": "read_holding_registers", "slave": 1, "start_addr": 0, "count": 10 },
+        { "op": "write_single_register", "slave": 1, "addr": 16, "value": 4660 }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/modbus_rtu_basic.svg" },
+    { "type": "sigrok", "path": "output/modbus_rtu_basic.sr" },
+    { "type": "vcd", "path": "output/modbus_rtu_basic.vcd" }
+  ]
+}
