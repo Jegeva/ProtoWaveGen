@@ -1,0 +1,23 @@
+{
+  "samplerate": 10000000,
+  "protocols": [
+    {
+      "id": "mw0", "type": "microwire",
+      "params": { "clock_hz": 1000000 },
+      "operations": [
+        {
+          "op": "transfer",
+          "mosi_bits": "11000010",
+          "read_bits": "0101101001011010",
+          "datatype": "bits",
+          "labels": ["CMD=0xC2"]
+        }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/microwire_basic.svg" },
+    { "type": "sigrok", "path": "output/microwire_basic.sr" },
+    { "type": "vcd", "path": "output/microwire_basic.vcd" }
+  ]
+}
