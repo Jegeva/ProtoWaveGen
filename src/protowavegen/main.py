@@ -33,6 +33,25 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--svg-verbose", action="store_true", dest="svg_verbose",
         help="Render protocol field descriptions inline on any SVG output",
     )
+    data_group = parser.add_mutually_exclusive_group()
+    data_group.add_argument(
+        "--data-hex", dest="data_hex", default=None,
+        help="Override an operation's payload with a hex-digit string (e.g. deadbeef)",
+    )
+    data_group.add_argument(
+        "--data-string", dest="data_string", default=None,
+        help="Override an operation's payload with a UTF-8 text string",
+    )
+    data_group.add_argument(
+        "--data-int", dest="data_int", default=None,
+        help="Override an operation's payload with comma-separated byte values (e.g. 72,101,108,108,111)",
+    )
+    parser.add_argument(
+        "--data-target", dest="data_target", default=None,
+        help="Which operation --data-hex/--data-string/--data-int applies to: "
+        "protocol_id:op_index[:field]. Required only when the config has more "
+        "than one data-carrying operation/field; the error message lists the candidates.",
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     return parser
 

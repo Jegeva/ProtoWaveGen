@@ -197,7 +197,17 @@ Everything flows through one pipeline, orchestrated by
   `decode_payload()` (`base.py`), called at the top of each JSON-facing
   operation method — see `examples/uart_basic.json` (`"datatype": "text"`)
   and `examples/sd_spi_basic.json` (`"datatype": "hex"`) for the two forms
-  in use; every other example still uses the plain int-array default.
+  in use; every other example still uses the plain int-array default. The
+  same three forms are also reachable from the CLI: `--data-hex`,
+  `--data-string`, `--data-int` (comma-separated, e.g. `72,101,108,108,111`)
+  override one operation's payload without editing the JSON, via
+  `apply_data_override()` (`config.py`). Since a real config can have
+  several data-carrying operations (e.g. `i2c_7bit.json`'s separate
+  `write`/`read`) or several payload fields on one operation (SPI
+  `transfer`'s `mosi`+`miso`), these flags only auto-detect the target when
+  it's unambiguous; otherwise `--data-target protocol_id:op_index[:field]`
+  is required, and the resulting `ValueError` lists every candidate in that
+  exact syntax so it can be copied straight into `--data-target`.
 - 27 protocols are implemented (one file each under `protocols/`, one
   `<name>_basic.json` each under `examples/`). Six are `TransportProtocol`s
   with their own physical-layer bit timing: **UART** (`uart.py`), **I2C**
