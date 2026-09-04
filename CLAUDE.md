@@ -127,6 +127,16 @@ changing the *test*, not the protocol:
   default trailing idle margin isn't long enough for the latter. **Worked
   around** the same way: a second frame's BREAK flushes the first (its
   sigrok round-trip test does this).
+- `nes_gamepad` (stacked on the generic `spi` decoder) only samples a bit
+  on a qualifying CLOCK edge and only emits a word after exactly
+  `wordsize` (8) such edges — it has no notion of a bit that's already
+  valid *before* the first clock edge. Real NES hardware (and
+  `NesGamepad.read_buttons()`) needs only 7 CLOCK pulses for 8 bits, since
+  the first bit is valid immediately once LATCH falls. Confirmed by
+  manually adding an 8th synthetic clock edge to a probe capture, which
+  immediately produced the correct decoded byte — but a real waveform
+  shaped that way would misrepresent actual NES controller timing, so
+  this is a genuine `spi`-decoder-model limitation, not a bug on our side.
 
 When adding a new protocol, still try a matching round-trip case first
 (`sigrok-cli --show -P <name>` prints required channels/options/annotation

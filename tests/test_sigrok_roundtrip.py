@@ -282,6 +282,29 @@ def test_can_with_floating_marker_still_roundtrips_through_sigrok(tmp_path):
 # what we generate. `Lm75._encode_temp`'s correctness is covered by
 # tests/protocols/test_lm75.py's unit tests instead.
 
+# No sigrok round-trip test for NesGamepad either, confirmed unfixable by
+# reading sigrok's `spi`/`nes_gamepad` decoder sources (the latter, id
+# 'nes_gamepad', stacks on the former) plus a hands-on probe: the generic
+# `spi` decoder's `handle_bit()` only records a bit on a *qualifying clock
+# edge* and only emits a word once exactly `wordsize` (8) such edges have
+# been seen — there is no notion of a bit that's already valid before the
+# first clock edge. Real NES hardware (and `NesGamepad.read_buttons()`,
+# matching it) needs only 7 CLOCK pulses for 8 bits, since the first bit
+# (button "A") is valid immediately once LATCH falls, before any CLOCK
+# activity — confirmed by manually adding an 8th synthetic clock edge to a
+# probe capture, at which point `spi`'s decoder immediately produced the
+# correct byte. `spi`'s optional `cs` channel doesn't help either: LATCH
+# is a momentary parallel-load strobe that's already back low by the time
+# CLOCK activity starts, so mapping it to `cs` just makes the decoder treat
+# the entire clocked region as CS-deasserted and ignore it outright.
+# Shaping the waveform to add a bogus 8th CLOCK pulse would "fix" the
+# decode but misrepresent real NES controller timing, which is exactly the
+# kind of value-over-correctness trade this project doesn't make — so this
+# is a genuine `spi`-decoder-model limitation (it assumes every shift
+# register uses one clock edge per bit with none "free"), not a bug on our
+# side. `NesGamepad.read_buttons`'s bit encoding/ordering is covered by
+# `tests/protocols/test_nes_gamepad.py`'s unit tests instead.
+
 
 def test_modbus_rtu_roundtrips_through_sigroks_modbus_decoder(tmp_path):
     config = Config(
