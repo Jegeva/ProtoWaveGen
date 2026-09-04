@@ -1,7 +1,16 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle, Signal, SignalKind
-from .base import DriverTracker, TransportProtocol, decode_payload, format_byte, register_protocol
+from .base import (
+    DriverTracker,
+    TransportProtocol,
+    bits_of_byte,
+    decode_payload_with_floating,
+    format_byte,
+    group_floating_by_byte,
+    microseconds_to_samples,
+    register_protocol,
+)
 
 
 @register_protocol("onewire")
@@ -55,10 +64,7 @@ class OneWireBus(TransportProtocol):
 
     def _ensure_bound(self, builder: CaptureBuilder) -> None:
         if self._slot_samples is None:
-            self._slot_samples = self._us(builder, self._SLOT_US)
-
-    def _us(self, builder: CaptureBuilder, microseconds: float) -> int:
-        return max(round(builder.samplerate * microseconds / 1_000_000), 1)
+            self._slot_samples = microseconds_to_samples(builder, self._SLOT_US)
 
     @property
     def bit_period_samples(self) -> int | None:
@@ -67,40 +73,45 @@ class OneWireBus(TransportProtocol):
     def get_signals(self) -> list[Signal]:
         return [Signal(self.sig("dq"), kind=SignalKind.TRISTATE, initial_level=1)]
 
-    def _write_bit(self, builder: CaptureBuilder, bit: int, tracker: DriverTracker) -> None:
+    def _write_bit(
+        self, builder: CaptureBuilder, bit: int, tracker: DriverTracker, floating: bool = False
+    ) -> None:
         dq = self.sig("dq")
         slot = self._slot_samples
         if bit:
-            low = self._us(builder, self._SHORT_PULSE_US)
+            low = microseconds_to_samples(builder, self._SHORT_PULSE_US)
         else:
             # hold low for most of the slot, but always leave a brief
             # release at the end so consecutive 0 bits still get a fresh
             # falling edge each slot instead of merging into one long low.
-            low = slot - self._us(builder, self._INTER_SLOT_RECOVERY_US)
+            low = slot - microseconds_to_samples(builder, self._INTER_SLOT_RECOVERY_US)
         builder.set_level(dq, 0)
-        tracker.set("master")
+        tracker.set("floating" if floating else "master")
         builder.advance(low)
         builder.set_level(dq, 1)
-        tracker.set("pullup")
+        tracker.set("floating" if floating else "pullup")
         builder.advance(slot - low)
 
-    def _read_bit(self, builder: CaptureBuilder, bit: int, tracker: DriverTracker) -> None:
+    def _read_bit(
+        self, builder: CaptureBuilder, bit: int, tracker: DriverTracker, floating: bool = False
+    ) -> None:
         dq = self.sig("dq")
         slot = self._slot_samples
-        pulse = self._us(builder, self._SHORT_PULSE_US)
+        pulse = microseconds_to_samples(builder, self._SHORT_PULSE_US)
         builder.set_level(dq, 0)
-        tracker.set("master")
+        tracker.set("floating" if floating else "master")
         builder.advance(pulse)
         if bit:
             builder.set_level(dq, 1)
-            tracker.set("pullup")
+            tracker.set("floating" if floating else "pullup")
             builder.advance(slot - pulse)
         else:
-            hold = self._us(builder, self._READ0_HOLD_US)
-            tracker.set("slave")  # device takes over the low pulse, no level change yet
+            hold = microseconds_to_samples(builder, self._READ0_HOLD_US)
+            # device takes over the low pulse, no level change yet
+            tracker.set("floating" if floating else "slave")
             builder.advance(max(hold - pulse, 0))
             builder.set_level(dq, 1)
-            tracker.set("pullup")
+            tracker.set("floating" if floating else "pullup")
             builder.advance(max(slot - hold, 0))
 
     def reset(self, builder: CaptureBuilder, *, presence: bool = True) -> FrameHandle:
@@ -110,23 +121,51 @@ class OneWireBus(TransportProtocol):
         with builder.frame() as fh:
             builder.set_level(dq, 0)
             tracker.set("master")
-            builder.advance(self._us(builder, self._RESET_LOW_US))
+            builder.advance(microseconds_to_samples(builder, self._RESET_LOW_US))
             builder.set_level(dq, 1)
             tracker.set("pullup")
-            builder.advance(self._us(builder, self._PRESENCE_DELAY_US))
+            builder.advance(microseconds_to_samples(builder, self._PRESENCE_DELAY_US))
             if presence:
                 builder.set_level(dq, 0)
                 tracker.set("slave")
-                builder.advance(self._us(builder, self._PRESENCE_LOW_US))
+                builder.advance(microseconds_to_samples(builder, self._PRESENCE_LOW_US))
                 builder.set_level(dq, 1)
                 tracker.set("pullup")
-            builder.advance(self._us(builder, self._RESET_RECOVERY_US))
+            builder.advance(microseconds_to_samples(builder, self._RESET_RECOVERY_US))
         tracker.close()
         builder.annotate("unit", "reset", start=fh.start, end=fh.end, signals=(dq,))
         builder.annotate(
             "field", "RESET" + (" (presence)" if presence else " (no presence)"),
             start=fh.start, end=fh.end, signals=(dq,), presence=presence,
         )
+        return fh
+
+    def _transfer(
+        self, builder: CaptureBuilder, *, data, datatype: str, labels: list[str] | None, bit_fn
+    ) -> FrameHandle:
+        """Shared body of `write()`/`read()` — identical byte-loop/
+        annotation shape either way, differing only in which per-bit
+        primitive (`_write_bit`/`_read_bit`) drives the line."""
+
+        payload = decode_payload_with_floating(data, datatype, tristate=True)
+        data = payload.values
+        floating_by_byte = group_floating_by_byte(payload.floating)
+        self._ensure_bound(builder)
+        dq = self.sig("dq")
+        tracker = DriverTracker(builder, dq)
+        with builder.frame() as fh:
+            for i, byte in enumerate(data):
+                floating_bits = floating_by_byte.get(i, frozenset())
+                with builder.frame() as byte_fh:
+                    for bit_index, bit in enumerate(bits_of_byte(byte, "lsb")):
+                        bit_fn(builder, bit, tracker, floating=(7 - bit_index) in floating_bits)
+                builder.annotate("unit", "byte", start=byte_fh.start, end=byte_fh.end, signals=(dq,))
+                label = labels[i] if labels else format_byte(byte)
+                builder.annotate(
+                    "field", label, start=byte_fh.start, end=byte_fh.end, signals=(dq,), value=byte,
+                )
+        tracker.close()
+        builder.annotate("bitorder", "lsb", start=fh.start, end=fh.end, signals=(dq,))
         return fh
 
     def write(
@@ -136,23 +175,7 @@ class OneWireBus(TransportProtocol):
         display — same reasoning as `UartTransport.send`'s `labels` param,
         for a stacked protocol's ROM/function command bytes."""
 
-        data = decode_payload(data, datatype)
-        self._ensure_bound(builder)
-        dq = self.sig("dq")
-        tracker = DriverTracker(builder, dq)
-        with builder.frame() as fh:
-            for i, byte in enumerate(data):
-                with builder.frame() as byte_fh:
-                    for bit in range(8):  # LSB first
-                        self._write_bit(builder, (byte >> bit) & 1, tracker)
-                builder.annotate("unit", "byte", start=byte_fh.start, end=byte_fh.end, signals=(dq,))
-                label = labels[i] if labels else format_byte(byte)
-                builder.annotate(
-                    "field", label, start=byte_fh.start, end=byte_fh.end, signals=(dq,), value=byte,
-                )
-        tracker.close()
-        builder.annotate("bitorder", "lsb", start=fh.start, end=fh.end, signals=(dq,))
-        return fh
+        return self._transfer(builder, data=data, datatype=datatype, labels=labels, bit_fn=self._write_bit)
 
     def read(
         self, builder: CaptureBuilder, *, data, datatype: str = "bytes", labels: list[str] | None = None
@@ -161,20 +184,4 @@ class OneWireBus(TransportProtocol):
         response — this tool generates diagrams, it doesn't sense a real
         device, so the bytes "read back" are supplied by the caller."""
 
-        data = decode_payload(data, datatype)
-        self._ensure_bound(builder)
-        dq = self.sig("dq")
-        tracker = DriverTracker(builder, dq)
-        with builder.frame() as fh:
-            for i, byte in enumerate(data):
-                with builder.frame() as byte_fh:
-                    for bit in range(8):  # LSB first
-                        self._read_bit(builder, (byte >> bit) & 1, tracker)
-                builder.annotate("unit", "byte", start=byte_fh.start, end=byte_fh.end, signals=(dq,))
-                label = labels[i] if labels else format_byte(byte)
-                builder.annotate(
-                    "field", label, start=byte_fh.start, end=byte_fh.end, signals=(dq,), value=byte,
-                )
-        tracker.close()
-        builder.annotate("bitorder", "lsb", start=fh.start, end=fh.end, signals=(dq,))
-        return fh
+        return self._transfer(builder, data=data, datatype=datatype, labels=labels, bit_fn=self._read_bit)

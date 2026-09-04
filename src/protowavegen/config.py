@@ -1,11 +1,25 @@
 from __future__ import annotations
 
+import inspect
 import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from .protocols import get_protocol_class
+
 _FORMAT_EXTENSIONS = {"svg": "svg", "sigrok": "sr", "vcd": "vcd"}
-_PAYLOAD_FIELDS = {"data", "values", "mosi", "miso", "write_data", "read_data"}
+_PAYLOAD_FIELDS = {
+    "data", "values", "mosi", "miso", "write_data", "read_data",
+    "bits", "mosi_bits", "read_bits", "command", "answer", "byte",
+    "DALI_ADDRESS",
+    # NOTE: plain "address" is deliberately NOT included — I2C's write/read
+    # operations already use it as the (non-payload) slave-address field,
+    # and this set is protocol-agnostic (shared across every protocol
+    # type), so adding it would make I2C's own `address` kwarg look like
+    # an ambiguous second payload candidate on every write/read op. DALI's
+    # own address field is named DALI_ADDRESS (see dali.py) specifically to
+    # avoid this collision while staying CLI-targetable.
+}
 
 
 def _parse_data_int(text: str) -> list[int]:
@@ -20,6 +34,18 @@ def _parse_data_int(text: str) -> list[int]:
             raise ValueError(f"--data-int: {value} does not fit in a byte (0-255)")
         values.append(value)
     return values
+
+
+def _load_data_file(path: str) -> list[int]:
+    """Read a `--data-file` path's raw bytes. CWD-relative, matching
+    `--config`'s own resolution (`load_json_config` below does a plain
+    `open(path)` with no directory-relative logic)."""
+
+    try:
+        with open(path, "rb") as f:
+            return list(f.read())
+    except OSError as exc:
+        raise ValueError(f"--data-file: could not read {path!r}: {exc}") from None
 
 
 def _find_payload_candidates(protocols: list[dict]) -> list[tuple[int, int, str]]:
@@ -38,6 +64,53 @@ def _find_payload_candidates(protocols: list[dict]) -> list[tuple[int, int, str]
 def _describe_candidate(protocols: list[dict], p_idx: int, op_idx: int, field: str) -> str:
     op_name = protocols[p_idx]["operations"][op_idx].get("op", "?")
     return f"{protocols[p_idx]['id']}:{op_idx}:{field} (op={op_name})"
+
+
+def _split_inline_target(raw: str) -> tuple[str | None, str]:
+    """Split one repeatable `--data-*` flag's raw value into an optional
+    inline `protocol_id:op_index[:field]` target prefix and the actual
+    payload value, e.g. `"i2c0:0:data:0b1101"` -> `("i2c0:0:data",
+    "0b1101")`. A leading `:` forces "no target, auto-detect" even when the
+    payload value itself contains colons (`":a:b:c"` -> `(None, "a:b:c")`);
+    with no leading `:`, a 3-segment field name is only recognized as part
+    of the target when it's one of `_PAYLOAD_FIELDS` (a closed, known
+    vocabulary), so a value with fewer than that many colons is never
+    mistaken for a target. With no colon at all, the whole string is the
+    value (auto-detect), matching the legacy single-flag usage."""
+
+    if raw.startswith(":"):
+        return None, raw[1:]
+    parts = raw.split(":")
+    if len(parts) < 3:
+        return None, raw
+    if len(parts) >= 4 and parts[2] in _PAYLOAD_FIELDS:
+        return ":".join(parts[:3]), ":".join(parts[3:])
+    return ":".join(parts[:2]), ":".join(parts[2:])
+
+
+def _datatype_kwarg_name(cls: type, op_name: str, field: str) -> str:
+    """Which kwarg name this operation method actually uses to select
+    `field`'s datatype: the shared `"datatype"` every protocol but DALI
+    uses, or DALI's own `f"{field}_datatype"` (it has multiple
+    independently-typed byte fields on one operation, so each needs its
+    own datatype selector — see `DaliBus.send_forward_frame`). Resolved
+    from the method's real signature rather than a hardcoded protocol-name
+    check, so this doesn't need updating if another protocol adopts the
+    same per-field convention later."""
+
+    method = getattr(cls, op_name, None)
+    if method is None:
+        raise ValueError(f"{cls.__name__} has no operation {op_name!r}")
+    params = inspect.signature(method).parameters
+    prefixed = f"{field}_datatype"
+    if prefixed in params:
+        return prefixed
+    if "datatype" in params:
+        return "datatype"
+    raise ValueError(
+        f"--data-*: {cls.__name__}.{op_name}() has no datatype parameter for field {field!r} "
+        f"(expected {prefixed!r} or 'datatype')"
+    )
 
 
 def _resolve_data_target(protocols: list[dict], target: str | None) -> tuple[int, int, str]:
@@ -105,31 +178,56 @@ def _resolve_data_target(protocols: list[dict], target: str | None) -> tuple[int
 
 
 def apply_data_override(protocols: list[dict], args) -> list[dict]:
-    """Apply `--data-hex`/`--data-string`/`--data-int` (at most one given)
-    to the operation named by `--data-target`, or an unambiguous
-    auto-detected one if `--data-target` is omitted. No-op if none of the
-    three `--data-*` flags were given."""
+    """Apply every `--data-hex`/`--data-string`/`--data-int`/`--data-bin`/
+    `--data-file` override — each repeatable and independently targeted —
+    to the config,
+    in the exact order given on the command line (see `_DataOverrideAction`
+    in `main.py`, which is what makes cross-flag order survive argparse).
+    Each occurrence's raw value may carry an inline
+    `protocol_id:op_index[:field]:` target prefix (`_split_inline_target`);
+    with none, the target falls back to the legacy global `--data-target`
+    flag, auto-detecting if that's unset too. Two overrides in the same
+    invocation resolving to the same operation/field is a conflict, not a
+    silent overwrite. No-op if no `--data-*` flag was given."""
 
-    if args.data_hex is not None:
-        value, datatype = args.data_hex, "hex"
-    elif args.data_string is not None:
-        value, datatype = args.data_string, "text"
-    elif args.data_int is not None:
-        value, datatype = _parse_data_int(args.data_int), "bytes"
-    else:
+    overrides = getattr(args, "data_overrides", None) or []
+    if not overrides:
         return protocols
 
-    p_idx, op_idx, field = _resolve_data_target(protocols, args.data_target)
-
     protocols = list(protocols)
-    spec = dict(protocols[p_idx])
-    operations = list(spec["operations"])
-    op = dict(operations[op_idx])
-    op[field] = value
-    op["datatype"] = datatype
-    operations[op_idx] = op
-    spec["operations"] = operations
-    protocols[p_idx] = spec
+    touched: dict[tuple[int, int, str], str] = {}
+
+    for option_string, datatype, raw_value in overrides:
+        inline_target, value = _split_inline_target(raw_value)
+        target = inline_target if inline_target is not None else args.data_target
+        p_idx, op_idx, field = _resolve_data_target(protocols, target)
+
+        key = (p_idx, op_idx, field)
+        this_override = f"{option_string} {raw_value!r}"
+        if key in touched:
+            raise ValueError(
+                f"conflicting --data-* overrides target the same field "
+                f"{protocols[p_idx]['id']}:{op_idx}:{field}: {touched[key]} and {this_override}"
+            )
+        touched[key] = this_override
+
+        if datatype == "bytes":
+            value = _parse_data_int(value)
+        elif datatype == "file":
+            value = _load_data_file(value)
+            datatype = "bytes"
+
+        spec = dict(protocols[p_idx])
+        operations = list(spec["operations"])
+        op = dict(operations[op_idx])
+        cls = get_protocol_class(spec["type"])
+        op_name = operations[op_idx]["op"]
+        op[field] = value
+        op[_datatype_kwarg_name(cls, op_name, field)] = datatype
+        operations[op_idx] = op
+        spec["operations"] = operations
+        protocols[p_idx] = spec
+
     return protocols
 
 

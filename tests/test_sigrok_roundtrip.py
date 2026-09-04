@@ -94,6 +94,39 @@ def test_i2c_roundtrips_through_sigroks_i2c_decoder(tmp_path):
     assert len(_decode(sr_path, pd, "ack")) == 5  # every other transferred byte acked
 
 
+def test_i2c_with_floating_marker_still_roundtrips_through_sigrok(tmp_path):
+    """A payload byte using the l/h/z floating-bit sentinel alphabet (see
+    `protocols/base.py`'s `decode_payload_with_floating`) still resolves to
+    a concrete, correctly-encoded value on the wire — sigrok's independent
+    I2C decoder has no notion of "floating", so this only proves the
+    resolved bits themselves are right; the "floating" driver-annotation
+    label is a diagram-only concern sigrok's `.sr` format can't carry
+    (see this repo's CLAUDE.md on `SigrokWriter` dropping annotations)."""
+
+    config = Config(
+        samplerate=4_000_000,
+        protocols=[
+            {
+                "id": "i2c0", "type": "i2c",
+                "params": {"clock_hz": 100_000, "addr_bits": 7},
+                "operations": [
+                    # "hh" -> both nibbles floating-resolves-high -> 0xFF
+                    {"op": "write", "address": 0x48, "data": "hh", "datatype": "hex"},
+                    # "ll" -> both nibbles floating-resolves-low -> 0x00
+                    {"op": "read", "address": 0x48, "data": "ll", "datatype": "hex"},
+                ],
+            }
+        ],
+        outputs=[],
+    )
+    sr_path = tmp_path / "i2c_floating.sr"
+    _write_sr(config, sr_path)
+
+    pd = "i2c:scl=i2c0.scl:sda=i2c0.sda"
+    assert _decode(sr_path, pd, "data-write") == ["Data write: FF"]
+    assert _decode(sr_path, pd, "data-read") == ["Data read: 00"]
+
+
 def test_lin_frame_bytes_roundtrip_through_sigroks_uart_decoder(tmp_path):
     config = Config(
         samplerate=1_000_000,
@@ -315,7 +348,7 @@ def test_dali_roundtrips_through_sigroks_dali_decoder(tmp_path):
             {
                 "id": "dali0", "type": "dali",
                 "operations": [
-                    {"op": "send_forward_frame", "address": 0x01, "command": 0xFE},
+                    {"op": "send_forward_frame", "DALI_ADDRESS": 0x01, "command": 0xFE},
                     {"op": "send_backward_frame", "answer": 0xFF},
                 ],
             }
@@ -466,3 +499,27 @@ def test_spi_roundtrips_through_sigroks_spi_decoder(tmp_path):
     pd = "spi:clk=spi0.sclk:mosi=spi0.mosi:miso=spi0.miso:cs=spi0.cs"
     assert _decode(sr_path, pd, "mosi-data") == ["9B", "01", "02"]
     assert _decode(sr_path, pd, "miso-data") == ["00", "00", "C8"]
+
+
+def test_spi_with_floating_marker_still_roundtrips_through_sigrok(tmp_path):
+    """Same floating-marker-resolves-to-concrete-bits guarantee as the I2C
+    case earlier in this file, now for SPI's newly-added per-bit
+    DriverTracker (this session's Phase B rollout) — "hl" -> 0xF0."""
+
+    config = Config(
+        samplerate=8_000_000,
+        protocols=[
+            {
+                "id": "spi0", "type": "spi",
+                "params": {"clock_hz": 1_000_000, "width": 1, "mode": 0, "bit_order": "msb"},
+                "operations": [{"op": "transfer", "mosi": "hl", "miso": "l3", "datatype": "hex"}],
+            }
+        ],
+        outputs=[],
+    )
+    sr_path = tmp_path / "spi_floating.sr"
+    _write_sr(config, sr_path)
+
+    pd = "spi:clk=spi0.sclk:mosi=spi0.mosi:miso=spi0.miso:cs=spi0.cs"
+    assert _decode(sr_path, pd, "mosi-data") == ["F0"]
+    assert _decode(sr_path, pd, "miso-data") == ["03"]

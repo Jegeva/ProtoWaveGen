@@ -2,34 +2,10 @@ from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle
 from .base import StackedProtocol, decode_payload, format_byte, register_protocol
+from .checksums import crc7_sd
 from .spi import SpiBus
 
-_CRC7_POLY = 0x09
 _DATA_START_TOKEN = 0xFE
-
-
-def _crc7(data: list[int]) -> int:
-    """SD command CRC-7 (polynomial 0x09, MSB-first, not reflected), over
-    the 5 command+argument bytes, returned as the final on-the-wire byte
-    already including the fixed stop bit (`(crc7 << 1) | 1`).
-
-    Bit-serial reference form (each bit of each byte combined with the
-    running register's own top bit) — verified against the two
-    universally-published SD command CRC constants: CMD0/arg 0 -> `0x95`,
-    CMD8/arg `0x1AA` -> `0x87` (see the tests). A byte-XOR-then-shift
-    structure (the shape used for CRC-8/CRC-16 elsewhere in this codebase)
-    does *not* reproduce these — this CRC-7 needs the bit-conditioned form.
-    """
-
-    crc = 0
-    for byte in data:
-        d = byte
-        for _ in range(8):
-            crc = (crc << 1) & 0xFF
-            if (d & 0x80) ^ (crc & 0x80):
-                crc = (crc ^ _CRC7_POLY) & 0xFF
-            d = (d << 1) & 0xFF
-    return ((crc << 1) | 1) & 0xFF
 
 
 @register_protocol("sd_spi")
@@ -55,7 +31,7 @@ class SdCardSpi(StackedProtocol):
     @staticmethod
     def _command_bytes(cmd: int, arg: int) -> list[int]:
         body = [0x40 | cmd, (arg >> 24) & 0xFF, (arg >> 16) & 0xFF, (arg >> 8) & 0xFF, arg & 0xFF]
-        return [*body, _crc7(body)]
+        return [*body, crc7_sd(body)]
 
     def _send_command(
         self, builder: CaptureBuilder, *, cmd: int, arg: int, response: list[int], response_label: str

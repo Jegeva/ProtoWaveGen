@@ -4,7 +4,7 @@
     {
       "id": "dali0", "type": "dali",
       "operations": [
-        { "op": "send_forward_frame", "address": 1, "command": 254 },
+        { "op": "send_forward_frame", "DALI_ADDRESS": 1, "command": 254 },
         { "op": "send_backward_frame", "answer": 255 }
       ]
     }

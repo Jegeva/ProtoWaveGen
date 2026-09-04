@@ -49,6 +49,38 @@ def test_send_to_host_includes_inhibit_and_ack():
     assert fh.end == capture.duration_samples
 
 
+def test_send_from_device_with_z_marker_resolves_high_and_annotates_floating():
+    ps2, builder = _setup()
+    fh = ps2.send_from_device(builder, byte="zz", datatype="hex")
+    capture = builder.finish()
+    assert fh is not None
+
+    field = [a for a in capture.annotations if a.track == "field"][0]
+    assert field.data["value"] == 0xFF  # TRISTATE pull-high, z resolves silently
+
+    floating = [a for a in capture.annotations if a.track == "driver" and a.label == "floating"]
+    assert len(floating) == 1  # coalesced across all 8 floating data bits
+
+
+def test_send_to_host_with_floating_marker_annotates_floating():
+    ps2, builder = _setup()
+    ps2.send_to_host(builder, byte="l1", datatype="hex")
+    capture = builder.finish()
+
+    field = [a for a in capture.annotations if a.track == "field"][0]
+    assert field.data["value"] == 0x01  # high nibble floating-low, low nibble driven
+
+    floating = [a for a in capture.annotations if a.track == "driver" and a.label == "floating"]
+    assert len(floating) == 1
+
+
+def test_send_from_device_plain_int_backward_compat_unaffected():
+    ps2, builder = _setup()
+    ps2.send_from_device(builder, byte=0x41)
+    capture = builder.finish()
+    assert not any(a.label == "floating" for a in capture.annotations if a.track == "driver")
+
+
 def test_bit_period_samples_after_bind():
     ps2, builder = _setup()
     assert ps2.bit_period_samples is None

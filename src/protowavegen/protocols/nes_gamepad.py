@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle, Signal
-from .base import TransportProtocol, register_protocol
+from .base import TransportProtocol, microseconds_to_samples, register_protocol
 
 _BUTTON_ORDER = ["A", "B", "Select", "Start", "Up", "Down", "Left", "Right"]
 
@@ -33,9 +33,6 @@ class NesGamepad(TransportProtocol):
         self.latch_us = latch_us
         self.clock_us = clock_us
 
-    def _us(self, builder: CaptureBuilder, microseconds: float) -> int:
-        return max(round(builder.samplerate * microseconds / 1_000_000), 1)
-
     def get_signals(self) -> list[Signal]:
         return [
             Signal(self.sig("latch"), initial_level=0),
@@ -46,8 +43,8 @@ class NesGamepad(TransportProtocol):
     def read_buttons(self, builder: CaptureBuilder, *, buttons: dict[str, bool]) -> FrameHandle:
         latch, clock, data = self.sig("latch"), self.sig("clock"), self.sig("data")
         bits = [0 if buttons.get(name, False) else 1 for name in _BUTTON_ORDER]  # active-low
-        latch_samples = self._us(builder, self.latch_us)
-        clock_samples = self._us(builder, self.clock_us)
+        latch_samples = microseconds_to_samples(builder, self.latch_us)
+        clock_samples = microseconds_to_samples(builder, self.clock_us)
 
         with builder.frame() as fh:
             builder.set_level(latch, 1)

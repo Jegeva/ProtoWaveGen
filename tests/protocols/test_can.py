@@ -17,15 +17,16 @@ def test_crc15_is_deterministic_and_sensitive_to_input():
 def test_stuff_inserts_opposite_bit_after_five_identical():
     bits = [0, 0, 0, 0, 0, 1, 1]
     roles = ["a"] * 5 + ["b", "b"]
-    stuffed_bits, stuffed_roles = _stuff(bits, roles)
+    stuffed_bits, stuffed_roles, stuffed_floating = _stuff(bits, roles, [False] * len(bits))
     assert stuffed_bits == [0, 0, 0, 0, 0, 1, 1, 1]
     assert stuffed_roles == ["a", "a", "a", "a", "a", "stuff", "b", "b"]
+    assert stuffed_floating == [False] * len(stuffed_bits)
 
 
 def test_stuff_noop_when_no_run_reaches_five():
     bits = [0, 0, 1, 1, 0, 0, 1]
     roles = ["x"] * len(bits)
-    stuffed_bits, stuffed_roles = _stuff(bits, roles)
+    stuffed_bits, stuffed_roles, _ = _stuff(bits, roles, [False] * len(bits))
     assert stuffed_bits == bits
     assert stuffed_roles == roles
 
@@ -35,8 +36,17 @@ def test_stuff_handles_a_run_created_by_a_previous_stuff_bit():
     # by four more 1s — the tracker must reset off the inserted bit, not the
     # original one.
     bits = [0, 0, 0, 0, 0, 1, 1, 1, 1]
-    stuffed, _ = _stuff(bits, ["r"] * len(bits))
+    stuffed, _, _ = _stuff(bits, ["r"] * len(bits), [False] * len(bits))
     assert stuffed == [0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0]
+
+
+def test_stuff_carries_floating_flag_through_and_marks_inserted_bit_not_floating():
+    bits = [0, 0, 0, 0, 0, 1, 1]
+    roles = ["a"] * 5 + ["b", "b"]
+    floating = [True, False, True, False, True, True, False]
+    stuffed_bits, _, stuffed_floating = _stuff(bits, roles, floating)
+    # the inserted stuff bit (index 5 in the output) is never floating
+    assert stuffed_floating == [True, False, True, False, True, False, True, False]
 
 
 def test_get_signals_and_bit_period():
@@ -75,6 +85,21 @@ def test_send_standard_frame_structure():
     assert [f.data["value"] for f in byte_fields] == [0xDE, 0xAD]
 
     assert any(a.track == "bitorder" and a.label == "msb" for a in capture.annotations)
+
+
+def test_send_with_floating_data_byte_annotates_floating_and_resolves_concrete_value():
+    can = CanBus("can0", bitrate=500_000)
+    builder = CaptureBuilder(samplerate=8_000_000)
+    can.register_signals(builder)
+    # "lh" -> high nibble floating-low (0x0), low nibble floating-high (0xF) -> 0x0F
+    can.send(builder, identifier=0x123, data="lh", datatype="hex")
+    capture = builder.finish()
+
+    byte_fields = [a for a in capture.annotations if a.track == "field" and a.label.startswith("0x")]
+    assert [f.data["value"] for f in byte_fields] == [0x0F]
+
+    floating = [a for a in capture.annotations if a.track == "driver" and a.label == "floating"]
+    assert len(floating) == 1  # coalesced into one span (CRC-15 is deterministic over the resolved bits)
 
 
 def test_send_rtr_frame_has_no_data_bytes():

@@ -1,4 +1,4 @@
-from protowavegen.protocols.checksums import crc8_1wire, crc16_modbus
+from protowavegen.protocols.checksums import crc7_sd, crc8_1wire, crc16_modbus, pec8_smbus
 
 
 def test_crc16_modbus_self_check_is_zero():
@@ -28,3 +28,25 @@ def test_crc8_1wire_self_check_is_zero():
 def test_crc8_1wire_sensitive_to_input():
     assert crc8_1wire([0x01, 0x02]) != crc8_1wire([0x01, 0x03])
     assert crc8_1wire([]) == 0x00
+
+
+def test_pec8_smbus_self_check_is_zero():
+    data = [0xB4, 0x07, 0xB5, 0x12, 0x34]
+    pec = pec8_smbus(data)
+    assert 0 <= pec <= 0xFF
+    assert pec8_smbus(data + [pec]) == 0x00
+
+
+def test_pec8_smbus_sensitive_to_input():
+    assert pec8_smbus([0x01, 0x02]) != pec8_smbus([0x01, 0x03])
+
+
+def test_crc7_sd_known_value_cmd0():
+    # CMD0 with argument 0 is a well-known, widely-published SD command CRC
+    # example: command bytes 40 00 00 00 00 -> CRC byte 0x95.
+    assert crc7_sd([0x40, 0x00, 0x00, 0x00, 0x00]) == 0x95
+
+
+def test_crc7_sd_known_value_cmd8():
+    # CMD8 with argument 0x1AA: command bytes 48 00 00 01 AA -> CRC byte 0x87.
+    assert crc7_sd([0x48, 0x00, 0x00, 0x01, 0xAA]) == 0x87

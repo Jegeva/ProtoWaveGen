@@ -2,23 +2,11 @@ from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle
 from .base import StackedProtocol, register_protocol
+from .checksums import pec8_smbus
 from .i2c import I2CBus
 
 _AMBIENT_REG = 0x06
 _OBJECT_REGS = {1: 0x07, 2: 0x08}
-
-
-def _pec8(data: list[int]) -> int:
-    """SMBus Packet Error Code: CRC-8-CCITT, polynomial 0x07, MSB-first,
-    not reflected — a different CRC-8 variant from 1-Wire's (see
-    `checksums.crc8_1wire`), kept local since it's SMBus/PEC-specific."""
-
-    crc = 0
-    for byte in data:
-        crc ^= byte
-        for _ in range(8):
-            crc = ((crc << 1) ^ 0x07) & 0xFF if crc & 0x80 else (crc << 1) & 0xFF
-    return crc
 
 
 @register_protocol("mlx90614")
@@ -51,7 +39,7 @@ class Mlx90614(StackedProtocol):
 
     def _read_temp_register(self, builder: CaptureBuilder, *, reg: int, celsius: float, label: str) -> FrameHandle:
         lo, hi = self._encode_temp(celsius)
-        pec = _pec8([self.address << 1, reg, (self.address << 1) | 1, lo, hi])
+        pec = pec8_smbus([self.address << 1, reg, (self.address << 1) | 1, lo, hi])
         return self.transport.write_then_read(
             builder, address=self.address, write_data=[reg], read_data=[lo, hi, pec],
             write_labels=[f"PTR=0x{reg:02X}"], read_labels=[label, label, f"PEC=0x{pec:02X}"],

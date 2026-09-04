@@ -1,7 +1,15 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle, Signal
-from .base import DriverTracker, TransportProtocol, decode_payload, format_byte, register_protocol
+from .base import (
+    DriverTracker,
+    TransportProtocol,
+    bind_clock_samples,
+    decode_payload_with_floating,
+    format_byte,
+    group_floating_by_byte,
+    register_protocol,
+)
 
 _CRC15_POLY = 0x4599
 
@@ -21,21 +29,26 @@ def _crc15(bits: list[int]) -> list[int]:
     return [(crc >> i) & 1 for i in reversed(range(15))]
 
 
-def _stuff(bits: list[int], roles: list[str]) -> tuple[list[int], list[str]]:
+def _stuff(
+    bits: list[int], roles: list[str], floating: list[bool]
+) -> tuple[list[int], list[str], list[bool]]:
     """Insert one opposite-polarity bit after 5 consecutive identical bits
-    (applies SOF through the CRC field). Returns bits and a parallel role
-    list so a stuffed bit's origin (arbitration field, a specific data byte,
-    CRC, ...) is still known after insertion — needed to still be able to
-    bracket "field" annotations around whole logical bytes even though a
-    stuff bit might land in the middle of one."""
+    (applies SOF through the CRC field). Returns bits and parallel role/
+    floating lists so a stuffed bit's origin (arbitration field, a specific
+    data byte, CRC, ...) — and whether it came from a payload bit explicitly
+    marked not-driven (see `decode_payload_with_floating`) — is still known
+    after insertion. A stuff bit itself is never floating: it's a real,
+    always-driven protocol-mandated insertion, not payload content."""
 
     out_bits: list[int] = []
     out_roles: list[str] = []
+    out_floating: list[bool] = []
     run_bit = None
     run_len = 0
-    for bit, role in zip(bits, roles):
+    for bit, role, is_floating in zip(bits, roles, floating):
         out_bits.append(bit)
         out_roles.append(role)
+        out_floating.append(is_floating)
         if bit == run_bit:
             run_len += 1
         else:
@@ -44,8 +57,9 @@ def _stuff(bits: list[int], roles: list[str]) -> tuple[list[int], list[str]]:
             stuff_bit = 1 - bit
             out_bits.append(stuff_bit)
             out_roles.append("stuff")
+            out_floating.append(False)
             run_bit, run_len = stuff_bit, 1
-    return out_bits, out_roles
+    return out_bits, out_roles, out_floating
 
 
 @register_protocol("can")
@@ -81,13 +95,7 @@ class CanBus(TransportProtocol):
         self._bit_samples: int | None = None
 
     def bind_samplerate(self, samplerate: int) -> None:
-        spb = round(samplerate / self.bitrate)
-        if spb < 1:
-            raise ValueError(
-                f"samplerate {samplerate} too low for bitrate {self.bitrate} "
-                f"(need at least {self.bitrate} Hz)"
-            )
-        self._bit_samples = spb
+        self._bit_samples = bind_clock_samples(samplerate, self.bitrate, hz_label="bitrate", divisor=1)
 
     def _ensure_bound(self, builder: CaptureBuilder) -> None:
         if self._bit_samples is None:
@@ -105,14 +113,20 @@ class CanBus(TransportProtocol):
         return (identifier >> 18) & 0x7FF, identifier & 0x3FFFF
 
     def _build_logical_bits(
-        self, identifier: int, data: list[int], rtr: bool
-    ) -> tuple[list[int], list[str]]:
+        self,
+        identifier: int,
+        data: list[int],
+        rtr: bool,
+        floating_by_byte: dict[int, frozenset[int]],
+    ) -> tuple[list[int], list[str], list[bool]]:
         bits: list[int] = []
         roles: list[str] = []
+        floating: list[bool] = []
 
-        def add(bit: int, role: str) -> None:
+        def add(bit: int, role: str, is_floating: bool = False) -> None:
             bits.append(bit)
             roles.append(role)
+            floating.append(is_floating)
 
         add(0, "sof")
         if self.extended:
@@ -141,21 +155,32 @@ class CanBus(TransportProtocol):
             add((dlc >> i) & 1, "dlc")
         if not rtr:
             for byte_index, byte in enumerate(data):
-                for i in reversed(range(8)):
-                    add((byte >> i) & 1, f"data{byte_index}")
-        return bits, roles
+                byte_floating_bits = floating_by_byte.get(byte_index, frozenset())
+                for bit_index, i in enumerate(reversed(range(8))):
+                    add((byte >> i) & 1, f"data{byte_index}", bit_index in byte_floating_bits)
+        return bits, roles, floating
 
     def send(
         self, builder: CaptureBuilder, *, identifier: int, data=None, datatype: str = "bytes", rtr: bool = False
     ) -> FrameHandle:
         self._ensure_bound(builder)
-        data = decode_payload(data, datatype) if data else []
+        if data:
+            data_payload = decode_payload_with_floating(data, datatype, tristate=False)
+            data = data_payload.values
+            floating_by_byte = group_floating_by_byte(data_payload.floating)
+        else:
+            data = []
+            floating_by_byte = {}
         if not (0 <= len(data) <= 8):
             raise ValueError(f"CAN data field is 0-8 bytes, got {len(data)}")
 
-        logical_bits, logical_roles = self._build_logical_bits(identifier, data, rtr)
+        logical_bits, logical_roles, logical_floating = self._build_logical_bits(
+            identifier, data, rtr, floating_by_byte
+        )
         crc_bits = _crc15(logical_bits)
-        stuffed_bits, stuffed_roles = _stuff(logical_bits + crc_bits, logical_roles + ["crc"] * 15)
+        stuffed_bits, stuffed_roles, stuffed_floating = _stuff(
+            logical_bits + crc_bits, logical_roles + ["crc"] * 15, logical_floating + [False] * 15
+        )
 
         can = self.sig("can")
         tracker = DriverTracker(builder, can)
@@ -166,13 +191,13 @@ class CanBus(TransportProtocol):
         with builder.frame() as fh:
             current_role = None
             role_start = builder.cursor
-            for bit, role in zip(stuffed_bits, stuffed_roles):
+            for bit, role, is_floating in zip(stuffed_bits, stuffed_roles, stuffed_floating):
                 if role != current_role:
                     self._annotate_role(
                         builder, can, current_role, role_start, builder.cursor, id_summary, data, frame_meta
                     )
                     current_role, role_start = role, builder.cursor
-                tracker.set("master")
+                tracker.set("floating" if is_floating else "master")
                 builder.set_level(can, bit)
                 builder.advance(self._bit_samples)
             self._annotate_role(

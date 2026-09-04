@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle, Signal, SignalKind
-from .base import DriverTracker, TransportProtocol, register_protocol
+from .base import (
+    DriverTracker,
+    TransportProtocol,
+    bits_of_byte,
+    decode_bits_with_floating,
+    microseconds_to_samples,
+    register_protocol,
+)
 
 
 @register_protocol("wiegand")
@@ -28,29 +35,41 @@ class WiegandBus(TransportProtocol):
         self.pulse_us = pulse_us
         self.interval_us = interval_us
 
-    def _us(self, builder: CaptureBuilder, microseconds: float) -> int:
-        return max(round(builder.samplerate * microseconds / 1_000_000), 1)
-
     def get_signals(self) -> list[Signal]:
         return [
             Signal(self.sig("d0"), kind=SignalKind.TRISTATE, initial_level=1),
             Signal(self.sig("d1"), kind=SignalKind.TRISTATE, initial_level=1),
         ]
 
-    def send_bits(self, builder: CaptureBuilder, *, bits: list[int]) -> FrameHandle:
+    def send_bits(self, builder: CaptureBuilder, *, bits, datatype: str = "bytes") -> FrameHandle:
+        """`bits` is a plain `list[int]` (`datatype="bytes"`, default,
+        unchanged from before) or, with `datatype="bits"`, a flat
+        `0`/`1`/`l/L`/`h/H`/`z/Z` string decoded via
+        `decode_bits_with_floating` — `d0`/`d1` are `TRISTATE` pull-high, so
+        `z`/`Z` auto-resolves the same way as I2C/1-Wire. A floating
+        position's pulse still happens exactly as any other bit's (its
+        resolved 0/1 value decides which line gets pulsed), only the
+        `DriverTracker` label for that pulse becomes `"floating"` instead of
+        `"reader"`."""
+
+        if datatype == "bits":
+            bits, floating_positions = decode_bits_with_floating(bits, tristate=True)
+        else:
+            floating_positions = frozenset()
         d0, d1 = self.sig("d0"), self.sig("d1")
-        pulse = self._us(builder, self.pulse_us)
-        interval = self._us(builder, self.interval_us)
+        pulse = microseconds_to_samples(builder, self.pulse_us)
+        interval = microseconds_to_samples(builder, self.interval_us)
         tracker0, tracker1 = DriverTracker(builder, d0), DriverTracker(builder, d1)
 
         with builder.frame() as fh:
             for i, bit in enumerate(bits):
                 line, tracker, idle_tracker = (d1, tracker1, tracker0) if bit else (d0, tracker0, tracker1)
+                floating = i in floating_positions
                 builder.set_level(line, 0)
-                tracker.set("reader")
+                tracker.set("floating" if floating else "reader")
                 builder.advance(pulse)
                 builder.set_level(line, 1)
-                tracker.set("pullup")
+                tracker.set("floating" if floating else "pullup")
                 idle_tracker.set("pullup")
                 if i < len(bits) - 1:
                     builder.advance(interval - pulse)
@@ -69,7 +88,7 @@ class WiegandBus(TransportProtocol):
         if not (0 <= card_number < 0x10000):
             raise ValueError(f"card_number {card_number} does not fit in 16 bits")
 
-        data_bits = [(facility_code >> i) & 1 for i in reversed(range(8))] + [
+        data_bits = bits_of_byte(facility_code) + [
             (card_number >> i) & 1 for i in reversed(range(16))
         ]
         leading_parity = self._parity_of(data_bits[:12])  # makes bits 1-13 even

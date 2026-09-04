@@ -1,17 +1,16 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle
-from .base import StackedProtocol, register_protocol
+from .base import register_protocol
 from .checksums import crc8_1wire
-from .onewire import OneWireBus
-from .onewire_rom import address_rom
+from .onewire_rom import OneWireDevice
 
 _CHANNEL_ACCESS_WRITE = 0x5A
 _READ_PIO_REGISTERS = 0xF0
 
 
 @register_protocol("ds2408")
-class Ds2408(StackedProtocol):
+class Ds2408(OneWireDevice):
     """1-Wire 8-channel addressable switch, stacked on `OneWireBus`.
 
     ROM addressing: Skip ROM (`0xCC`, single-device bus) by default, or
@@ -26,17 +25,10 @@ class Ds2408(StackedProtocol):
     "succeed".
     """
 
-    def __init__(
-        self, node_id: str, transport: OneWireBus, *, rom_id: list[int] | None = None,
-        operations: list[dict] | None = None,
-    ):
-        super().__init__(node_id, transport, operations)
-        self.rom_id = rom_id
-
     def read_pio(self, builder: CaptureBuilder, *, state: int) -> FrameHandle:
         """`state` is the synthesized 8-bit PIO logic-state byte."""
 
-        address_rom(self.transport, builder, self.rom_id)
+        self._address_rom(builder)
         crc = crc8_1wire([_READ_PIO_REGISTERS, state])
         self.transport.write(builder, data=[_READ_PIO_REGISTERS], labels=["CMD=READ_PIO"])
         return self.transport.read(
@@ -44,7 +36,7 @@ class Ds2408(StackedProtocol):
         )
 
     def write_pio(self, builder: CaptureBuilder, *, bits: int) -> FrameHandle:
-        address_rom(self.transport, builder, self.rom_id)
+        self._address_rom(builder)
         fh = self.transport.write(
             builder, data=[_CHANNEL_ACCESS_WRITE, bits, (~bits) & 0xFF],
             labels=["CMD=WRITE", f"BITS=0b{bits:08b}", "~BITS"],

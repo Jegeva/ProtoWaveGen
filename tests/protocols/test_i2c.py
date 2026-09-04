@@ -67,6 +67,39 @@ def test_open_drain_driver_annotations_never_call_a_high_level_driven():
                 assert level_at_start == 0, f"{line} driven by {a.label} but level is {level_at_start}"
 
 
+def test_write_with_floating_marker_annotates_floating_driver_and_resolves_concrete_bits():
+    i2c = I2CBus("i2c0", clock_hz=100_000, addr_bits=7)
+    builder = CaptureBuilder(samplerate=4_000_000)
+    i2c.register_signals(builder)
+    # "2h" -> high nibble driven (0x2), low nibble floating-resolves-high (0xF) -> 0x2F
+    i2c.write(builder, address=0x48, data="2h", datatype="hex")
+    capture = builder.finish()
+
+    floating = [a for a in capture.annotations if a.track == "driver" and a.label == "floating"]
+    assert len(floating) == 1  # one coalesced span for the 4 floating bits
+
+    field = next(a for a in capture.annotations if a.track == "field" and a.data.get("value") == 0x2F)
+    assert field is not None  # the byte resolved to a concrete int, same as any other write
+
+
+def test_read_with_z_marker_resolves_high_via_pullup_and_annotates_floating():
+    """`z`/`Z` on I2C's SDA (a TRISTATE signal) resolves silently via the
+    bus's protocol-defined pull, no explicit polarity needed."""
+
+    i2c = I2CBus("i2c0", clock_hz=100_000, addr_bits=7)
+    builder = CaptureBuilder(samplerate=4_000_000)
+    i2c.register_signals(builder)
+    i2c.read(builder, address=0x48, data="zz", datatype="hex")
+    capture = builder.finish()
+
+    # last "value"-carrying field annotation is the data byte (address comes first)
+    field = [a for a in capture.annotations if a.track == "field" and "value" in a.data][-1]
+    assert field.data["value"] == 0xFF
+
+    floating = [a for a in capture.annotations if a.track == "driver" and a.label == "floating"]
+    assert len(floating) == 1
+
+
 def test_write_7bit_address_and_rw_bit():
     i2c = I2CBus("i2c0", clock_hz=100_000, addr_bits=7)
     builder = CaptureBuilder(samplerate=4_000_000)

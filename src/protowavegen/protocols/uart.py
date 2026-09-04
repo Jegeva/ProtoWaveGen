@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle, Signal
-from .base import TransportProtocol, decode_payload, format_byte, register_protocol
+from .base import TransportProtocol, bind_clock_samples, decode_payload, format_byte, register_protocol
 
 _VALID_PARITY = {"none", "even", "odd", "mark", "space"}
 _VALID_STOP_BITS = {1, 1.5, 2}
@@ -65,13 +65,7 @@ class UartTransport(TransportProtocol):
         self._samples_per_bit: int | None = None
 
     def bind_samplerate(self, samplerate: int) -> None:
-        spb = round(samplerate / self.baudrate)
-        if spb < 1:
-            raise ValueError(
-                f"samplerate {samplerate} too low for baudrate {self.baudrate} "
-                f"(need at least {self.baudrate} Hz)"
-            )
-        self._samples_per_bit = spb
+        self._samples_per_bit = bind_clock_samples(samplerate, self.baudrate, hz_label="baudrate", divisor=1)
 
     @property
     def bit_period_samples(self) -> int | None:

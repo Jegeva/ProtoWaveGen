@@ -1,7 +1,16 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle, Signal, SignalKind
-from .base import DriverTracker, TransportProtocol, format_byte, register_protocol
+from .base import (
+    DriverTracker,
+    TransportProtocol,
+    bind_clock_samples,
+    bits_of_byte,
+    format_byte,
+    microseconds_to_samples,
+    register_protocol,
+    resolve_single_byte,
+)
 
 
 @register_protocol("ps2")
@@ -35,13 +44,7 @@ class Ps2Bus(TransportProtocol):
         self._half_period_samples: int | None = None
 
     def bind_samplerate(self, samplerate: int) -> None:
-        shp = round(samplerate / (2 * self.clock_hz))
-        if shp < 1:
-            raise ValueError(
-                f"samplerate {samplerate} too low for clock_hz {self.clock_hz} "
-                f"(need at least {2 * self.clock_hz} Hz)"
-            )
-        self._half_period_samples = shp
+        self._half_period_samples = bind_clock_samples(samplerate, self.clock_hz, hz_label="clock_hz")
 
     def _ensure_bound(self, builder: CaptureBuilder) -> None:
         if self._half_period_samples is None:
@@ -63,7 +66,7 @@ class Ps2Bus(TransportProtocol):
 
     def _device_clocked_bit(
         self, builder: CaptureBuilder, level: int, clock_tracker: DriverTracker, data_tracker: DriverTracker,
-        data_owner: str,
+        data_owner: str, floating: bool = False,
     ) -> None:
         """One device-generated clock cycle: data set while clock is high,
         sampled on the falling edge — same shape whichever direction owns
@@ -74,21 +77,31 @@ class Ps2Bus(TransportProtocol):
         builder.set_level(clock, 1)
         clock_tracker.set("pullup")
         builder.set_level(data, level)
-        data_tracker.set(data_owner if level == 0 else "pullup")
+        data_tracker.set("floating" if floating else (data_owner if level == 0 else "pullup"))
         builder.advance(shp)
         builder.set_level(clock, 0)
         clock_tracker.set("device")
         builder.advance(shp)
 
-    def send_from_device(self, builder: CaptureBuilder, *, byte: int) -> FrameHandle:
+    def send_from_device(self, builder: CaptureBuilder, *, byte, datatype: str = "bytes") -> FrameHandle:
+        """`byte` is a plain int (`datatype="bytes"`, default, unchanged
+        from before) or, with a hex/bin/text `datatype`, a single-byte
+        payload via `resolve_single_byte` — `clock`/`data` are `TRISTATE`
+        pull-high, so `z`/`Z` auto-resolves the same way as I2C/1-Wire."""
+
         self._ensure_bound(builder)
+        byte, floating_bits = resolve_single_byte(byte, datatype, tristate=True)
         clock, data = self.sig("clock"), self.sig("data")
         clock_tracker, data_tracker = DriverTracker(builder, clock), DriverTracker(builder, data)
-        bits = [0, *((byte >> i) & 1 for i in range(8)), self._odd_parity(byte), 1]
+        bits = [0, *bits_of_byte(byte, "lsb"), self._odd_parity(byte), 1]
+        # data-bit positions are indices 1..8 in `bits` (start bit is index 0);
+        # position p there is source bit i=p-1 (LSB-first), matching FloatingSpan's
+        # MSB-first (0=MSB) bit_index = 7-i = 8-p. Start/parity/stop are never floating.
+        bit_floating = [False] + [(8 - p) in floating_bits for p in range(1, 9)] + [False, False]
 
         with builder.frame() as fh:
-            for bit in bits:
-                self._device_clocked_bit(builder, bit, clock_tracker, data_tracker, "device")
+            for bit, floating in zip(bits, bit_floating):
+                self._device_clocked_bit(builder, bit, clock_tracker, data_tracker, "device", floating)
         clock_tracker.close()
         data_tracker.close()
 
@@ -97,12 +110,14 @@ class Ps2Bus(TransportProtocol):
         builder.annotate("bitorder", "lsb", start=fh.start, end=fh.end, signals=(data,))
         return fh
 
-    def send_to_host(self, builder: CaptureBuilder, *, byte: int) -> FrameHandle:
+    def send_to_host(self, builder: CaptureBuilder, *, byte, datatype: str = "bytes") -> FrameHandle:
         self._ensure_bound(builder)
+        byte, floating_bits = resolve_single_byte(byte, datatype, tristate=True)
         clock, data = self.sig("clock"), self.sig("data")
         clock_tracker, data_tracker = DriverTracker(builder, clock), DriverTracker(builder, data)
-        inhibit_samples = max(round(builder.samplerate * self.inhibit_us / 1_000_000), 1)
-        bits = [*((byte >> i) & 1 for i in range(8)), self._odd_parity(byte), 1]
+        inhibit_samples = microseconds_to_samples(builder, self.inhibit_us)
+        bits = [*bits_of_byte(byte, "lsb"), self._odd_parity(byte), 1]
+        bit_floating = [(7 - j) in floating_bits for j in range(8)] + [False, False]
 
         with builder.frame() as fh:
             builder.set_level(clock, 0)  # host inhibit
@@ -113,9 +128,9 @@ class Ps2Bus(TransportProtocol):
             builder.set_level(clock, 1)  # host releases the clock; device takes over
             clock_tracker.set("pullup")
             builder.advance(self._half_period_samples)
-            for bit in bits:
-                self._device_clocked_bit(builder, bit, clock_tracker, data_tracker, "host")
-            self._device_clocked_bit(builder, 0, clock_tracker, data_tracker, "device")  # ACK
+            for bit, floating in zip(bits, bit_floating):
+                self._device_clocked_bit(builder, bit, clock_tracker, data_tracker, "host", floating)
+            self._device_clocked_bit(builder, 0, clock_tracker, data_tracker, "device")  # ACK, never floating
         clock_tracker.close()
         data_tracker.close()
 

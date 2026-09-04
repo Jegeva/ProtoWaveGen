@@ -32,6 +32,39 @@ def test_transfer_asserts_cs_and_clocks_bits():
     assert len(clk_edges) == 1 + 2 * 5 - 1 + 1
 
 
+def test_transfer_datatype_bits_with_floating_marker():
+    mw, builder = _setup()
+    # mosi "1h0" -> bit0=1(driven), bit1=h(floating-high), bit2=0(driven)
+    # read "l1" -> bit0=l(floating-low), bit1=1(driven)
+    fh = mw.transfer(builder, mosi_bits="1h0", read_bits="l1", datatype="bits")
+    capture = builder.finish()
+    assert fh is not None
+
+    di_floating = [
+        a for a in capture.annotations
+        if a.track == "driver" and a.label == "floating" and a.signals == ("mw0.di",)
+    ]
+    do_floating = [
+        a for a in capture.annotations
+        if a.track == "driver" and a.label == "floating" and a.signals == ("mw0.do",)
+    ]
+    assert len(di_floating) == 1  # bit1 of mosi
+    assert len(do_floating) == 1  # bit0 of read
+
+    # floating bits resolve to concrete levels baked into the waveform: h -> 1, l -> 0
+    di_edges = capture.edges["mw0.di"]
+    do_edges = capture.edges["mw0.do"]
+    assert di_edges == ((0, 1), (25, 0), (35, 1))  # 1,1(h),0 -> edge only at bit2, back to 1 for read phase
+    assert do_edges == ((0, 1), (40, 0), (50, 1))  # do stays 1 through mosi phase, then 0(l),1
+
+
+def test_transfer_plain_list_backward_compat_unaffected_by_datatype_param():
+    mw, builder = _setup()
+    mw.transfer(builder, mosi_bits=[1, 0], read_bits=[0, 1])  # no datatype -> unchanged behavior
+    capture = builder.finish()
+    assert not any(a.label == "floating" for a in capture.annotations if a.track == "driver")
+
+
 def test_di_do_carry_correct_bits():
     mw, builder = _setup()
     mw.transfer(builder, mosi_bits=[1, 0], read_bits=[0, 1])

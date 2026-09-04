@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle
-from .base import StackedProtocol, decode_payload, format_byte, register_protocol
+from .base import decode_payload, format_byte, register_protocol
 from .checksums import crc16_modbus
-from .onewire import OneWireBus
-from .onewire_rom import address_rom
+from .onewire_rom import OneWireDevice
 
 _WRITE_SCRATCHPAD = 0x0F
 _READ_SCRATCHPAD = 0xAA
@@ -13,7 +12,7 @@ _READ_MEMORY = 0xF0
 
 
 @register_protocol("ds243x")
-class Ds243x(StackedProtocol):
+class Ds243x(OneWireDevice):
     """1-Wire EEPROM (e.g. DS2433), stacked on `OneWireBus`.
 
     `write_memory()` does the real 3-transaction sequence real drivers use:
@@ -27,26 +26,19 @@ class Ds243x(StackedProtocol):
     scratchpad step, just address + data straight back).
     """
 
-    def __init__(
-        self, node_id: str, transport: OneWireBus, *, rom_id: list[int] | None = None,
-        operations: list[dict] | None = None,
-    ):
-        super().__init__(node_id, transport, operations)
-        self.rom_id = rom_id
-
     def write_memory(self, builder: CaptureBuilder, *, address: int, data, datatype: str = "bytes") -> FrameHandle:
         data = decode_payload(data, datatype)
         addr_lo, addr_hi = address & 0xFF, (address >> 8) & 0xFF
         ending_offset = (len(data) - 1) & 0x1F
 
-        address_rom(self.transport, builder, self.rom_id)
+        self._address_rom(builder)
         self.transport.write(
             builder, data=[_WRITE_SCRATCHPAD, addr_lo, addr_hi, *data],
             labels=["CMD=WRITE_SP", f"TA1=0x{addr_lo:02X}", f"TA2=0x{addr_hi:02X}"]
             + [format_byte(b) for b in data],
         )
 
-        address_rom(self.transport, builder, self.rom_id)
+        self._address_rom(builder)
         crc = crc16_modbus([_READ_SCRATCHPAD, addr_lo, addr_hi, ending_offset, *data])
         self.transport.write(builder, data=[_READ_SCRATCHPAD], labels=["CMD=READ_SP"])
         self.transport.read(
@@ -58,7 +50,7 @@ class Ds243x(StackedProtocol):
             ),
         )
 
-        address_rom(self.transport, builder, self.rom_id)
+        self._address_rom(builder)
         return self.transport.write(
             builder, data=[_COPY_SCRATCHPAD, addr_lo, addr_hi, ending_offset],
             labels=["CMD=COPY_SP", f"TA1=0x{addr_lo:02X}", f"TA2=0x{addr_hi:02X}", f"E/S=0x{ending_offset:02X}"],
@@ -69,7 +61,7 @@ class Ds243x(StackedProtocol):
 
         data = decode_payload(data, datatype)
         addr_lo, addr_hi = address & 0xFF, (address >> 8) & 0xFF
-        address_rom(self.transport, builder, self.rom_id)
+        self._address_rom(builder)
         self.transport.write(
             builder, data=[_READ_MEMORY, addr_lo, addr_hi],
             labels=["CMD=READ_MEM", f"ADDR_LO=0x{addr_lo:02X}", f"ADDR_HI=0x{addr_hi:02X}"],

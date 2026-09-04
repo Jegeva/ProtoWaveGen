@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle
-from .base import StackedProtocol, register_protocol
+from .base import microseconds_to_samples, register_protocol
 from .checksums import crc8_1wire
 from .onewire import OneWireBus
-from .onewire_rom import address_rom
+from .onewire_rom import OneWireDevice
 
 _CONVERT_T = 0x44
 _READ_SCRATCHPAD = 0xBE
@@ -13,7 +13,7 @@ _DEFAULT_CONVERSION_DELAY_US = 750_000  # 750ms, typical max for 12-bit resoluti
 
 
 @register_protocol("ds28ea00")
-class Ds28ea00(StackedProtocol):
+class Ds28ea00(OneWireDevice):
     """DS18B20-family digital thermometer with an extra 2-channel PIO and
     sequence-detect (chaining) support, stacked on `OneWireBus`. Only the
     temperature path is modeled — sequence-detect/PIO access isn't.
@@ -30,8 +30,7 @@ class Ds28ea00(StackedProtocol):
         self, node_id: str, transport: OneWireBus, *, rom_id: list[int] | None = None,
         conversion_delay_us: int = _DEFAULT_CONVERSION_DELAY_US, operations: list[dict] | None = None,
     ):
-        super().__init__(node_id, transport, operations)
-        self.rom_id = rom_id
+        super().__init__(node_id, transport, rom_id=rom_id, operations=operations)
         self.conversion_delay_us = conversion_delay_us
 
     @staticmethod
@@ -43,15 +42,15 @@ class Ds28ea00(StackedProtocol):
         self, builder: CaptureBuilder, *, celsius: float, th: int = 0, tl: int = 0, config: int = 0x7F
     ) -> FrameHandle:
         dq = self.transport.sig("dq")
-        address_rom(self.transport, builder, self.rom_id)
+        self._address_rom(builder)
         self.transport.write(builder, data=[_CONVERT_T], labels=["CMD=CONVERT_T"])
 
-        delay_samples = max(round(builder.samplerate * self.conversion_delay_us / 1_000_000), 1)
+        delay_samples = microseconds_to_samples(builder, self.conversion_delay_us)
         with builder.frame() as delay_fh:
             builder.advance(delay_samples)  # external-power mode: DQ just idles high
         builder.annotate("field", "CONVERTING", start=delay_fh.start, end=delay_fh.end, signals=(dq,))
 
-        address_rom(self.transport, builder, self.rom_id)
+        self._address_rom(builder)
         lo, hi = self._encode_temp(celsius)
         scratchpad = [lo, hi, th & 0xFF, tl & 0xFF, config & 0xFF, 0xFF, 0xFF, 0xFF]
         crc = crc8_1wire([_READ_SCRATCHPAD, *scratchpad])
@@ -67,7 +66,7 @@ class Ds28ea00(StackedProtocol):
         )
 
     def write_scratchpad(self, builder: CaptureBuilder, *, th: int, tl: int, config: int) -> FrameHandle:
-        address_rom(self.transport, builder, self.rom_id)
+        self._address_rom(builder)
         return self.transport.write(
             builder, data=[_WRITE_SCRATCHPAD, th & 0xFF, tl & 0xFF, config & 0xFF],
             labels=["CMD=WRITE_SP", f"TH=0x{th & 0xFF:02X}", f"TL=0x{tl & 0xFF:02X}", f"CONFIG=0x{config & 0xFF:02X}"],

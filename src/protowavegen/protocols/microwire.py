@@ -1,7 +1,13 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle, Signal
-from .base import TransportProtocol, register_protocol
+from .base import (
+    DriverTracker,
+    TransportProtocol,
+    bind_clock_samples,
+    decode_bits_with_floating,
+    register_protocol,
+)
 
 
 @register_protocol("microwire")
@@ -31,13 +37,7 @@ class MicrowireBus(TransportProtocol):
         self._shc: int | None = None
 
     def bind_samplerate(self, samplerate: int) -> None:
-        shc = round(samplerate / (2 * self.clock_hz))
-        if shc < 1:
-            raise ValueError(
-                f"samplerate {samplerate} too low for clock_hz {self.clock_hz} "
-                f"(need at least {2 * self.clock_hz} Hz)"
-            )
-        self._shc = shc
+        self._shc = bind_clock_samples(samplerate, self.clock_hz, hz_label="clock_hz")
 
     def _ensure_bound(self, builder: CaptureBuilder) -> None:
         if self._shc is None:
@@ -55,7 +55,16 @@ class MicrowireBus(TransportProtocol):
             Signal(self.sig("do"), initial_level=1),
         ]
 
-    def _clock_bit(self, builder: CaptureBuilder, di_bit: int, do_bit: int) -> None:
+    def _clock_bit(
+        self,
+        builder: CaptureBuilder,
+        di_bit: int,
+        do_bit: int,
+        di_tracker: DriverTracker,
+        do_tracker: DriverTracker,
+        di_floating: bool = False,
+        do_floating: bool = False,
+    ) -> None:
         # SI (di, master-driven) and SO (do, slave-driven) change on
         # opposite edges of the clock, not simultaneously — a real
         # Microwire master sets DI while the clock is low (so it's stable
@@ -74,31 +83,47 @@ class MicrowireBus(TransportProtocol):
         shc = self._shc
         builder.set_level(clk, 0)  # falling edge: DI (SI) changes here
         builder.set_level(di, di_bit)
+        di_tracker.set("floating" if di_floating else "master")
         builder.advance(shc)
         builder.set_level(clk, 1)  # rising edge: DO (SO) changes here
         builder.set_level(do, do_bit)
+        do_tracker.set("floating" if do_floating else "slave")
         builder.advance(shc)
 
     def transfer(
-        self, builder: CaptureBuilder, *, mosi_bits: list[int], read_bits: list[int] | None = None,
+        self, builder: CaptureBuilder, *, mosi_bits, read_bits=None, datatype: str = "bytes",
         labels: list[str] | None = None,
     ) -> FrameHandle:
-        self._ensure_bound(builder)
-        read_bits = read_bits or []
-        clk, cs, di, do = self.sig("clk"), self.sig("cs"), self.sig("di"), self.sig("do")
+        """`mosi_bits`/`read_bits` are plain `list[int]` (`datatype="bytes"`,
+        default, unchanged from before) or, with `datatype="bits"`, flat
+        `0`/`1`/`l/L`/`h/H`/`z/Z` strings decoded via
+        `decode_bits_with_floating`. `di`/`do` are plain `DIGITAL` (no
+        protocol-defined pull — see the class docstring), so `z`/`Z` always
+        needs `l`/`h` used explicitly instead (`tristate=False`)."""
 
-        # Minimum CS-deasserted recovery time before asserting — without it,
-        # two back-to-back transfer() calls collide with zero samples
-        # between one's deassert and the next's assert (same real bug
-        # SpiBus.transfer() had; see its comment — confirmed here too via
-        # sigrok's microwire decoder merging separate commands together).
+        self._ensure_bound(builder)
+        if datatype == "bits":
+            mosi_bits, mosi_floating = decode_bits_with_floating(mosi_bits, tristate=False)
+            read_bits, read_floating = (
+                decode_bits_with_floating(read_bits, tristate=False) if read_bits else ([], frozenset())
+            )
+        else:
+            mosi_floating = frozenset()
+            read_bits = read_bits or []
+            read_floating = frozenset()
+        clk, cs, di, do = self.sig("clk"), self.sig("cs"), self.sig("di"), self.sig("do")
+        di_tracker, do_tracker = DriverTracker(builder, di), DriverTracker(builder, do)
+
+        # Minimum CS-deasserted recovery time before asserting — see
+        # SpiBus.transfer()'s comment for why; confirmed here too via
+        # sigrok's microwire decoder merging separate commands together.
         builder.advance(self._shc)
         with builder.frame() as fh:
             builder.set_level(cs, 1)  # active-high assert
-            for bit in mosi_bits:
-                self._clock_bit(builder, bit, 1)
-            for bit in read_bits:
-                self._clock_bit(builder, 1, bit)
+            for i, bit in enumerate(mosi_bits):
+                self._clock_bit(builder, bit, 1, di_tracker, do_tracker, di_floating=i in mosi_floating)
+            for i, bit in enumerate(read_bits):
+                self._clock_bit(builder, 1, bit, di_tracker, do_tracker, do_floating=i in read_floating)
             # Bring the clock back to idle-low before dropping CS. Without
             # this, CS falls while clk is still high (the last `_clock_bit`
             # leaves it there) — real hardware always deasserts CS with SK
@@ -112,6 +137,8 @@ class MicrowireBus(TransportProtocol):
             builder.set_level(clk, 0)
             builder.advance(self._shc)
             builder.set_level(cs, 0)
+        di_tracker.close()
+        do_tracker.close()
 
         label = labels[0] if labels else f"DI={len(mosi_bits)}b DO={len(read_bits)}b"
         builder.annotate("field", label, start=fh.start, end=fh.end, signals=(di, do))

@@ -1,7 +1,16 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle, Signal, SignalKind
-from .base import DriverTracker, TransportProtocol, decode_payload, format_byte, register_protocol
+from .base import (
+    DriverTracker,
+    TransportProtocol,
+    bind_clock_samples,
+    bits_of_byte,
+    decode_payload_with_floating,
+    format_byte,
+    group_floating_by_byte,
+    register_protocol,
+)
 
 _VALID_ADDR_BITS = {7, 10}
 
@@ -45,13 +54,7 @@ class I2CBus(TransportProtocol):
         self._samples_per_half_bit: int | None = None
 
     def bind_samplerate(self, samplerate: int) -> None:
-        shb = round(samplerate / (2 * self.clock_hz))
-        if shb < 1:
-            raise ValueError(
-                f"samplerate {samplerate} too low for clock_hz {self.clock_hz} "
-                f"(need at least {2 * self.clock_hz} Hz)"
-            )
-        self._samples_per_half_bit = shb
+        self._samples_per_half_bit = bind_clock_samples(samplerate, self.clock_hz, hz_label="clock_hz")
 
     def _ensure_bound(self, builder: CaptureBuilder) -> None:
         if self._samples_per_half_bit is None:
@@ -69,14 +72,22 @@ class I2CBus(TransportProtocol):
 
     # -- open-drain bit/condition primitives -------------------------------
 
-    def _clock_bit(self, builder: CaptureBuilder, level: int, owner: str) -> None:
+    def _clock_bit(
+        self, builder: CaptureBuilder, level: int, owner: str, floating: bool = False
+    ) -> None:
         scl, sda = self.sig("scl"), self.sig("sda")
         shb = self._samples_per_half_bit
         # SCL low: SDA changes here (data must be stable before SCL rises)
         builder.set_level(scl, 0)
         self._scl_driver.set("master")
         builder.set_level(sda, level)
-        self._sda_driver.set(owner if level == 0 else "pullup")
+        if floating:
+            # explicitly marked "not this party's turn to drive" (see
+            # decode_payload_with_floating) — label it regardless of which
+            # level it resolved to, unlike the normal owner-vs-pullup split.
+            self._sda_driver.set("floating")
+        else:
+            self._sda_driver.set(owner if level == 0 else "pullup")
         builder.advance(shb)
         # SCL high: data held stable, this is when a receiver samples it
         builder.set_level(scl, 1)
@@ -127,19 +138,21 @@ class I2CBus(TransportProtocol):
         unit_label: str,
         display_label: str,
         nack: bool = False,
+        floating_bits: frozenset[int] = frozenset(),
     ) -> FrameHandle:
         """`unit_label` is the stable category (`"address"`/`"data"`) used for
         the `unit` color-bar track; `display_label` is what's actually shown
         on the `field` lane — always the fully-formatted value (e.g.
         `"ADDR=0x48 W"`, `"0x2A '*'"`), not gated behind verbose mode, since
-        the value itself is the point of a `field` annotation, not an extra."""
+        the value itself is the point of a `field` annotation, not an extra.
+        `floating_bits` (0 = MSB, from `Payload.floating` via
+        `group_floating_by_byte`) marks which of this byte's 8 data bits were
+        explicitly not-driven — the ACK/NACK bit is never floating."""
 
-        if not (0 <= byte <= 0xFF):
-            raise ValueError(f"byte {byte} does not fit in 8 bits")
         receiver = "slave" if sender == "master" else "master"
         with builder.frame() as fh:
-            for i in reversed(range(8)):  # MSB first
-                self._clock_bit(builder, (byte >> i) & 1, sender)
+            for bit_index, bit in enumerate(bits_of_byte(byte)):  # MSB first
+                self._clock_bit(builder, bit, sender, floating=bit_index in floating_bits)
             self._clock_bit(builder, 1 if nack else 0, receiver)
         sda = self.sig("sda")
         # address+R/W+ACK (or data+ACK) is I2C's natural "unit" — the SVG
@@ -204,7 +217,9 @@ class I2CBus(TransportProtocol):
         annotation over the same range (same reasoning as `UartTransport
         .send`'s `labels` param)."""
 
-        data = decode_payload(data, datatype)
+        payload = decode_payload_with_floating(data, datatype, tristate=True)
+        data = payload.values
+        floating_by_byte = group_floating_by_byte(payload.floating)
         self._ensure_bound(builder)
         self._scl_driver = DriverTracker(builder, self.sig("scl"))
         self._sda_driver = DriverTracker(builder, self.sig("sda"))
@@ -217,7 +232,7 @@ class I2CBus(TransportProtocol):
                 label = labels[i] if labels else format_byte(byte)
                 self._transfer_byte(
                     builder, byte, sender="master", unit_label="data", display_label=label,
-                    nack=(nack and is_last),
+                    nack=(nack and is_last), floating_bits=floating_by_byte.get(i, frozenset()),
                 )
             self._stop_condition(builder)
 
@@ -240,8 +255,12 @@ class I2CBus(TransportProtocol):
         `write_labels`/`read_labels` work like `write()`'s `labels`.
         `datatype` applies to both `write_data` and `read_data`."""
 
-        write_data = decode_payload(write_data, datatype)
-        read_data = decode_payload(read_data, datatype)
+        write_payload = decode_payload_with_floating(write_data, datatype, tristate=True)
+        read_payload = decode_payload_with_floating(read_data, datatype, tristate=True)
+        write_data = write_payload.values
+        read_data = read_payload.values
+        write_floating_by_byte = group_floating_by_byte(write_payload.floating)
+        read_floating_by_byte = group_floating_by_byte(read_payload.floating)
         self._ensure_bound(builder)
         self._scl_driver = DriverTracker(builder, self.sig("scl"))
         self._sda_driver = DriverTracker(builder, self.sig("sda"))
@@ -251,7 +270,10 @@ class I2CBus(TransportProtocol):
             self._send_address_for_write(builder, address)
             for i, byte in enumerate(write_data):
                 label = write_labels[i] if write_labels else format_byte(byte)
-                self._transfer_byte(builder, byte, sender="master", unit_label="data", display_label=label)
+                self._transfer_byte(
+                    builder, byte, sender="master", unit_label="data", display_label=label,
+                    floating_bits=write_floating_by_byte.get(i, frozenset()),
+                )
             self._start_condition(builder)  # repeated START, switch to read
             self._transfer_byte(
                 builder, self._address_bytes(address, rw=1)[0], sender="master",
@@ -262,7 +284,7 @@ class I2CBus(TransportProtocol):
                 label = read_labels[i] if read_labels else format_byte(byte)
                 self._transfer_byte(
                     builder, byte, sender="slave", unit_label="data", display_label=label,
-                    nack=(nack_last and is_last),
+                    nack=(nack_last and is_last), floating_bits=read_floating_by_byte.get(i, frozenset()),
                 )
             self._stop_condition(builder)
 
@@ -275,7 +297,9 @@ class I2CBus(TransportProtocol):
         self, builder: CaptureBuilder, *, address: int, data, datatype: str = "bytes", nack_last: bool = True,
         labels: list[str] | None = None,
     ) -> FrameHandle:
-        data = decode_payload(data, datatype)
+        payload = decode_payload_with_floating(data, datatype, tristate=True)
+        data = payload.values
+        floating_by_byte = group_floating_by_byte(payload.floating)
         self._ensure_bound(builder)
         self._scl_driver = DriverTracker(builder, self.sig("scl"))
         self._sda_driver = DriverTracker(builder, self.sig("sda"))
@@ -288,7 +312,7 @@ class I2CBus(TransportProtocol):
                 label = labels[i] if labels else format_byte(byte)
                 self._transfer_byte(
                     builder, byte, sender="slave", unit_label="data", display_label=label,
-                    nack=(nack_last and is_last),
+                    nack=(nack_last and is_last), floating_bits=floating_by_byte.get(i, frozenset()),
                 )
             self._stop_condition(builder)
 

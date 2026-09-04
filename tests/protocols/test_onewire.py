@@ -73,6 +73,23 @@ def test_write_byte_lsb_first_write0_and_write1_patterns():
     assert fields[0].data["value"] == 1
 
 
+def test_write_with_z_marker_resolves_high_and_annotates_floating():
+    """`z`/`Z` on 1-Wire's DQ (a TRISTATE signal) resolves silently via the
+    bus's protocol-defined pull, same as I2C's SDA/SCL."""
+
+    ow = OneWireBus("ow0")
+    builder = _builder()
+    ow.register_signals(builder)
+    ow.write(builder, data="zz", datatype="hex")
+    capture = builder.finish()
+
+    fields = [a for a in capture.annotations if a.track == "field"]
+    assert fields[0].data["value"] == 0xFF
+
+    floating = [a for a in capture.annotations if a.track == "driver" and a.label == "floating"]
+    assert len(floating) == 1  # coalesced into one span across the whole floating byte
+
+
 def test_read_byte_lsb_first_read0_and_read1_patterns():
     ow = OneWireBus("ow0")
     builder = _builder()

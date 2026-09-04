@@ -48,6 +48,51 @@ def test_driver_and_bitorder_annotations():
     assert len(bitorder) == 1 and bitorder[0].label == "lsb"
 
 
+def test_transfer_with_floating_marker_annotates_floating_and_resolves_concrete_bits():
+    spi = SpiBus("spi0", clock_hz=1_000_000, width=1, mode=0, bit_order="msb")
+    builder = CaptureBuilder(samplerate=10_000_000)
+    spi.register_signals(builder)
+    # mosi "2h" -> 0x2F; miso "l3" -> 0x03 (low nibble driven), high nibble floating-low
+    spi.transfer(builder, mosi="2h", miso="l3", datatype="hex")
+    capture = builder.finish()
+
+    mosi_floating = [
+        a for a in capture.annotations
+        if a.track == "driver" and a.label == "floating" and a.signals == ("spi0.mosi",)
+    ]
+    miso_floating = [
+        a for a in capture.annotations
+        if a.track == "driver" and a.label == "floating" and a.signals == ("spi0.miso",)
+    ]
+    assert len(mosi_floating) == 1
+    assert len(miso_floating) == 1
+
+    field = [a for a in capture.annotations if a.track == "field"][0]
+    assert field.data["mosi"] == 0x2F
+    assert field.data["miso"] == 0x03
+
+    # master/slave labels still appear for the driven nibbles
+    assert any(a.label == "master" for a in capture.annotations if a.track == "driver")
+    assert any(a.label == "slave" for a in capture.annotations if a.track == "driver")
+
+
+def test_wide_transfer_with_floating_marker_annotates_floating():
+    spi = SpiBus("spi0", clock_hz=1_000_000, width=4, mode=0)
+    builder = CaptureBuilder(samplerate=10_000_000)
+    spi.register_signals(builder)
+    # "hl" -> 0xF0 (high nibble floating-high, low nibble floating-low)
+    spi.wide_transfer(builder, data="hl", datatype="hex", direction="write")
+    capture = builder.finish()
+
+    field = [a for a in capture.annotations if a.track == "field"][0]
+    assert field.data["value"] == 0xF0
+
+    floating = [a for a in capture.annotations if a.track == "driver" and a.label == "floating"]
+    # coalesced into one span per io line (all 8 bits of the single byte are floating)
+    assert len(floating) == 4
+    assert {a.signals[0] for a in floating} == {"spi0.io0", "spi0.io1", "spi0.io2", "spi0.io3"}
+
+
 def test_wide_transfer_qspi_four_lines():
     spi = SpiBus("spi0", clock_hz=1_000_000, width=4, mode=0)
     builder = CaptureBuilder(samplerate=10_000_000)

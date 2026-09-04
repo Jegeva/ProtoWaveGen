@@ -37,6 +37,31 @@ def test_last_bit_has_no_trailing_interval():
     assert capture.duration_samples == 50
 
 
+def test_send_bits_datatype_bits_with_floating_marker():
+    wg, builder = _setup()
+    # "0z1" -> bit0=0 (driven), bit1=z (floating, resolves high via pullup), bit2=1 (driven)
+    fh = wg.send_bits(builder, bits="0z1", datatype="bits")
+    capture = builder.finish()
+
+    d0_edges = capture.edges["wg0.d0"]
+    d1_edges = capture.edges["wg0.d1"]
+    assert d0_edges == ((0, 1), (0, 0), (50, 1))  # bit0=0 pulses d0
+    # z resolves to 1 (pull-high) -> pulses d1, same as a real 1 would
+    assert d1_edges[1] == (2000, 0)
+    assert fh.end == 4050
+
+    floating = [a for a in capture.annotations if a.track == "driver" and a.label == "floating"]
+    assert len(floating) == 1
+    assert floating[0].signals == ("wg0.d1",)  # the z bit pulsed d1
+
+
+def test_send_bits_plain_list_backward_compat_unaffected_by_datatype_param():
+    wg, builder = _setup()
+    wg.send_bits(builder, bits=[0, 1])  # no datatype given -> unchanged today's behavior
+    capture = builder.finish()
+    assert not any(a.label == "floating" for a in capture.annotations if a.track == "driver")
+
+
 def test_26bit_card_parity_properties():
     wg, builder = _setup()
     wg.send_card_26bit(builder, facility_code=12, card_number=34567)

@@ -1,19 +1,9 @@
 import pytest
 
 from protowavegen.model import CaptureBuilder
+from protowavegen.protocols.checksums import pec8_smbus
 from protowavegen.protocols.i2c import I2CBus
-from protowavegen.protocols.mlx90614 import Mlx90614, _pec8
-
-
-def test_pec8_self_check_is_zero():
-    data = [0xB4, 0x07, 0xB5, 0x12, 0x34]
-    pec = _pec8(data)
-    assert 0 <= pec <= 0xFF
-    assert _pec8(data + [pec]) == 0x00
-
-
-def test_pec8_sensitive_to_input():
-    assert _pec8([0x01, 0x02]) != _pec8([0x01, 0x03])
+from protowavegen.protocols.mlx90614 import Mlx90614
 
 
 def _setup(address=0x5A):
@@ -35,7 +25,7 @@ def test_read_object_temperature_includes_correct_pec():
     assert labels.count("T_obj1=+36.5C") == 2
 
     lo, hi = Mlx90614._encode_temp(36.5)
-    expected_pec = _pec8([0x5A << 1, 0x07, (0x5A << 1) | 1, lo, hi])
+    expected_pec = pec8_smbus([0x5A << 1, 0x07, (0x5A << 1) | 1, lo, hi])
     assert f"PEC=0x{expected_pec:02X}" in labels
 
 

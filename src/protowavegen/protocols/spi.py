@@ -1,7 +1,16 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle, Signal
-from .base import TransportProtocol, decode_payload, format_byte, register_protocol
+from .base import (
+    DriverTracker,
+    TransportProtocol,
+    bind_clock_samples,
+    bits_of_byte,
+    decode_payload_with_floating,
+    format_byte,
+    group_floating_by_byte,
+    register_protocol,
+)
 
 _VALID_WIDTHS = {1, 4, 8}
 _VALID_MODES = {0, 1, 2, 3}
@@ -12,8 +21,12 @@ _VALID_BIT_ORDER = {"msb", "lsb"}
 class SpiBus(TransportProtocol):
     """SPI (`width=1`), QSPI (`width=4`) or OctoSPI (`width=8`) — one class,
     since the only real difference is how many parallel data lines a clock
-    edge carries. Push-pull bus (unlike I2C), so lines are plainly DIGITAL
-    and driver annotations are static per transfer rather than per-bit.
+    edge carries. Push-pull bus (unlike I2C), so lines are plainly DIGITAL,
+    with no protocol-defined pull — a `z`/`Z` floating marker always needs
+    `l`/`h` used explicitly instead (see `decode_payload_with_floating`'s
+    `tristate` param, always `False` here). Driver annotations are per-bit
+    (`DriverTracker`), coalescing into the same single whole-transfer span
+    as before whenever no payload byte uses a floating marker.
 
     `transfer()` is classic full-duplex SPI (independent `mosi`/`miso`).
     `wide_transfer()` is QSPI/OctoSPI: all `width` IO lines carry one shared
@@ -61,13 +74,7 @@ class SpiBus(TransportProtocol):
         return self.mode & 1
 
     def bind_samplerate(self, samplerate: int) -> None:
-        shc = round(samplerate / (2 * self.clock_hz))
-        if shc < 1:
-            raise ValueError(
-                f"samplerate {samplerate} too low for clock_hz {self.clock_hz} "
-                f"(need at least {2 * self.clock_hz} Hz)"
-            )
-        self._shc = shc
+        self._shc = bind_clock_samples(samplerate, self.clock_hz, hz_label="clock_hz")
 
     def _ensure_bound(self, builder: CaptureBuilder) -> None:
         if self._shc is None:
@@ -85,12 +92,6 @@ class SpiBus(TransportProtocol):
             signals += [Signal(self.sig(f"io{i}")) for i in range(self.width)]
         signals.append(Signal(self.sig("cs"), initial_level=1 if self.cs_active_low else 0))
         return signals
-
-    def _bits_of(self, byte: int) -> list[int]:
-        if not (0 <= byte <= 0xFF):
-            raise ValueError(f"byte {byte} does not fit in 8 bits")
-        order = reversed(range(8)) if self.bit_order == "msb" else range(8)
-        return [(byte >> i) & 1 for i in order]
 
     def _assert_cs(self, builder: CaptureBuilder) -> None:
         builder.set_level(self.sig("cs"), 0 if self.cs_active_low else 1)
@@ -138,12 +139,21 @@ class SpiBus(TransportProtocol):
         if self.width != 1:
             raise ValueError("transfer() is for width=1 (classic SPI); use wide_transfer() for QSPI/OctoSPI")
         self._ensure_bound(builder)
-        mosi_bytes = decode_payload(mosi, datatype) if mosi else []
-        miso_bytes = decode_payload(miso, datatype) if miso is not None else [0] * len(mosi_bytes)
+        mosi_payload = decode_payload_with_floating(mosi, datatype, tristate=False) if mosi else None
+        mosi_bytes = mosi_payload.values if mosi_payload else []
+        mosi_floating_by_byte = group_floating_by_byte(mosi_payload.floating) if mosi_payload else {}
+        if miso is not None:
+            miso_payload = decode_payload_with_floating(miso, datatype, tristate=False)
+            miso_bytes = miso_payload.values
+            miso_floating_by_byte = group_floating_by_byte(miso_payload.floating)
+        else:
+            miso_bytes = [0] * len(mosi_bytes)
+            miso_floating_by_byte = {}
         if len(mosi_bytes) != len(miso_bytes):
             raise ValueError("mosi and miso must be the same length (one shared clock drives both)")
 
         mosi_line, miso_line = self.sig("mosi"), self.sig("miso")
+        mosi_tracker, miso_tracker = DriverTracker(builder, mosi_line), DriverTracker(builder, miso_line)
         # Minimum CS-deasserted recovery time before asserting: without it,
         # two back-to-back transfer() calls each bracket their own CS with
         # zero samples between the first's deassert and the second's
@@ -155,13 +165,23 @@ class SpiBus(TransportProtocol):
         with builder.frame() as fh:
             self._assert_cs(builder)
             for i, (mbyte, sbyte) in enumerate(zip(mosi_bytes, miso_bytes)):
+                mosi_floating_bits = mosi_floating_by_byte.get(i, frozenset())
+                miso_floating_bits = miso_floating_by_byte.get(i, frozenset())
                 with builder.frame() as byte_fh:
-                    for mbit, sbit in zip(self._bits_of(mbyte), self._bits_of(sbyte)):
+                    mbits, sbits = bits_of_byte(mbyte, self.bit_order), bits_of_byte(sbyte, self.bit_order)
+                    for pos, (mbit, sbit) in enumerate(zip(mbits, sbits)):
+                        # `pos` follows this transfer's own bit_order; FloatingSpan's
+                        # bit_index is always MSB-first (0=MSB) regardless of it.
+                        bit_index = pos if self.bit_order == "msb" else 7 - pos
+                        m_floating = bit_index in mosi_floating_bits
+                        s_floating = bit_index in miso_floating_bits
                         self._clock_edges(
                             builder,
-                            lambda mbit=mbit, sbit=sbit: (
+                            lambda mbit=mbit, sbit=sbit, m_floating=m_floating, s_floating=s_floating: (
                                 builder.set_level(mosi_line, mbit),
+                                mosi_tracker.set("floating" if m_floating else "master"),
                                 builder.set_level(miso_line, sbit),
+                                miso_tracker.set("floating" if s_floating else "slave"),
                             ),
                         )
                 builder.annotate(
@@ -173,34 +193,53 @@ class SpiBus(TransportProtocol):
                     mosi=mbyte, miso=sbyte,
                 )
             self._deassert_cs(builder)
+        mosi_tracker.close()
+        miso_tracker.close()
 
-        builder.annotate("driver", "master", start=fh.start, end=fh.end, signals=(mosi_line,))
-        builder.annotate("driver", "slave", start=fh.start, end=fh.end, signals=(miso_line,))
         builder.annotate(
             "bitorder", self.bit_order, start=fh.start, end=fh.end, signals=(mosi_line, miso_line)
         )
         return fh
 
-    def wide_transfer(self, builder: CaptureBuilder, *, data: list[int], direction: str = "write") -> FrameHandle:
+    def wide_transfer(
+        self, builder: CaptureBuilder, *, data, direction: str = "write", datatype: str = "bytes"
+    ) -> FrameHandle:
         if self.width == 1:
             raise ValueError("wide_transfer() is for width>1 (QSPI/OctoSPI); use transfer() for classic SPI")
         if direction not in ("write", "read"):
             raise ValueError(f"direction must be 'write' or 'read', got {direction!r}")
         self._ensure_bound(builder)
+        payload = decode_payload_with_floating(data, datatype, tristate=False)
+        data_bytes = payload.values
+        floating_by_byte = group_floating_by_byte(payload.floating)
 
         io_lines = [self.sig(f"io{i}") for i in range(self.width)]
+        owner = "master" if direction == "write" else "slave"
+        trackers = [DriverTracker(builder, line) for line in io_lines]
         builder.advance(self._shc)  # minimum CS recovery time — see transfer()'s comment
         with builder.frame() as fh:
             self._assert_cs(builder)
-            for byte in data:
-                bits = self._bits_of(byte)
+            for byte_index, byte in enumerate(data_bytes):
+                floating_bits = floating_by_byte.get(byte_index, frozenset())
+                bits = bits_of_byte(byte, self.bit_order)
                 with builder.frame() as byte_fh:
                     for start in range(0, 8, self.width):
                         symbol = bits[start : start + self.width]
+                        # positions in this symbol, in FloatingSpan's MSB-first (0=MSB) convention
+                        symbol_bit_indices = [
+                            pos if self.bit_order == "msb" else 7 - pos
+                            for pos in range(start, start + self.width)
+                        ]
                         self._clock_edges(
                             builder,
-                            lambda symbol=symbol: [
-                                builder.set_level(name, bit) for name, bit in zip(io_lines, symbol)
+                            lambda symbol=symbol, symbol_bit_indices=symbol_bit_indices: [
+                                (
+                                    builder.set_level(name, bit),
+                                    tracker.set("floating" if bit_index in floating_bits else owner),
+                                )
+                                for name, bit, tracker, bit_index in zip(
+                                    io_lines, symbol, trackers, symbol_bit_indices
+                                )
                             ],
                         )
                 builder.annotate("unit", "byte", start=byte_fh.start, end=byte_fh.end, signals=tuple(io_lines))
@@ -209,9 +248,8 @@ class SpiBus(TransportProtocol):
                     start=byte_fh.start, end=byte_fh.end, signals=(io_lines[0],), value=byte,
                 )
             self._deassert_cs(builder)
+        for tracker in trackers:
+            tracker.close()
 
-        owner = "master" if direction == "write" else "slave"
-        for line in io_lines:
-            builder.annotate("driver", owner, start=fh.start, end=fh.end, signals=(line,))
         builder.annotate("bitorder", self.bit_order, start=fh.start, end=fh.end, signals=tuple(io_lines))
         return fh
