@@ -1,8 +1,8 @@
 import pytest
 
-from timingdiagram.model import CaptureBuilder
-from timingdiagram.protocols.i2c import I2CBus
-from timingdiagram.protocols.mlx90614 import Mlx90614, _pec8
+from protowavegen.model import CaptureBuilder
+from protowavegen.protocols.i2c import I2CBus
+from protowavegen.protocols.mlx90614 import Mlx90614, _pec8
 
 
 def test_pec8_self_check_is_zero():

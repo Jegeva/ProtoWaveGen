@@ -1,8 +1,8 @@
 import pytest
 
-from timingdiagram.model import CaptureBuilder
-from timingdiagram.protocols.lin import LinBus
-from timingdiagram.protocols.uart import UartTransport
+from protowavegen.model import CaptureBuilder
+from protowavegen.protocols.lin import LinBus
+from protowavegen.protocols.uart import UartTransport
 
 
 def _half_duplex_uart(node_id="lin_uart", baudrate=9600):

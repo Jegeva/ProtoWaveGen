@@ -1,6 +1,6 @@
-from timingdiagram.model import CaptureBuilder
-from timingdiagram.protocols.max7219 import Max7219
-from timingdiagram.protocols.spi import SpiBus
+from protowavegen.model import CaptureBuilder
+from protowavegen.protocols.max7219 import Max7219
+from protowavegen.protocols.spi import SpiBus
 
 
 def _setup():

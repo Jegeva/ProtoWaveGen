@@ -1,6 +1,6 @@
 import pytest
 
-from timingdiagram.model import CaptureBuilder, Signal, pad_idle
+from protowavegen.model import CaptureBuilder, Signal, pad_idle
 
 
 def test_register_signal_seeds_initial_edge():
@@ -141,7 +141,7 @@ def test_pad_idle_minimum_one_sample_for_tiny_captures():
 
 
 def test_annotation_covers_and_applies_to():
-    from timingdiagram.model import Annotation
+    from protowavegen.model import Annotation
 
     open_ended = Annotation(track="t", label="l", start=5)
     assert not open_ended.covers(4)

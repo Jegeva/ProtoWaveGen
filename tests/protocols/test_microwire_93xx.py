@@ -1,6 +1,6 @@
-from timingdiagram.model import CaptureBuilder
-from timingdiagram.protocols.microwire import MicrowireBus
-from timingdiagram.protocols.microwire_93xx import Microwire93xxEeprom
+from protowavegen.model import CaptureBuilder
+from protowavegen.protocols.microwire import MicrowireBus
+from protowavegen.protocols.microwire_93xx import Microwire93xxEeprom
 
 
 def _setup(addr_bits=6):

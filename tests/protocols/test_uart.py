@@ -1,5 +1,5 @@
-from timingdiagram.model import CaptureBuilder
-from timingdiagram.protocols.uart import UartTransport
+from protowavegen.model import CaptureBuilder
+from protowavegen.protocols.uart import UartTransport
 
 
 def _generate(uart, samplerate, **send_kwargs):

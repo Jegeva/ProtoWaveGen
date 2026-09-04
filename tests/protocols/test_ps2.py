@@ -1,5 +1,5 @@
-from timingdiagram.model import CaptureBuilder, SignalKind
-from timingdiagram.protocols.ps2 import Ps2Bus
+from protowavegen.model import CaptureBuilder, SignalKind
+from protowavegen.protocols.ps2 import Ps2Bus
 
 
 def _setup(clock_hz=12_500, inhibit_us=100):

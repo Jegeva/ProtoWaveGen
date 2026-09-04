@@ -1,8 +1,8 @@
 import pytest
 
-from timingdiagram.model import CaptureBuilder
-from timingdiagram.protocols.eeprom_24xx import Eeprom24xx
-from timingdiagram.protocols.i2c import I2CBus
+from protowavegen.model import CaptureBuilder
+from protowavegen.protocols.eeprom_24xx import Eeprom24xx
+from protowavegen.protocols.i2c import I2CBus
 
 
 def _setup(addr_width=1, page_size=16):

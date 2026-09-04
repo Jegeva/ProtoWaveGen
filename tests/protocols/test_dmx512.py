@@ -1,8 +1,8 @@
 import pytest
 
-from timingdiagram.model import CaptureBuilder
-from timingdiagram.protocols.dmx512 import Dmx512
-from timingdiagram.protocols.uart import UartTransport
+from protowavegen.model import CaptureBuilder
+from protowavegen.protocols.dmx512 import Dmx512
+from protowavegen.protocols.uart import UartTransport
 
 
 def _setup():

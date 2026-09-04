@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from timingdiagram.main import main
+from protowavegen.main import main
 
 
 def test_cli_runs_example_config_and_writes_outputs(tmp_path):
@@ -41,8 +41,8 @@ def test_cli_samplerate_override_takes_precedence_over_json():
         "protocols": [],
         "outputs": [],
     }
-    from timingdiagram.config import resolve_config
-    from timingdiagram.main import build_arg_parser
+    from protowavegen.config import resolve_config
+    from protowavegen.main import build_arg_parser
 
     args = build_arg_parser().parse_args(["--config", "unused.json", "--samplerate", "42"])
     resolved = resolve_config(config, args)

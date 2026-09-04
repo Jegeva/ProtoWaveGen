@@ -1,7 +1,7 @@
-from timingdiagram.model import CaptureBuilder
-from timingdiagram.protocols.checksums import crc8_1wire
-from timingdiagram.protocols.ds28ea00 import Ds28ea00
-from timingdiagram.protocols.onewire import OneWireBus
+from protowavegen.model import CaptureBuilder
+from protowavegen.protocols.checksums import crc8_1wire
+from protowavegen.protocols.ds28ea00 import Ds28ea00
+from protowavegen.protocols.onewire import OneWireBus
 
 
 def _setup(conversion_delay_us=100):  # shorten for fast tests

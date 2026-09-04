@@ -1,7 +1,7 @@
 import pytest
 
-from timingdiagram.model import CaptureBuilder, SignalKind
-from timingdiagram.protocols.wiegand import WiegandBus
+from protowavegen.model import CaptureBuilder, SignalKind
+from protowavegen.protocols.wiegand import WiegandBus
 
 
 def _setup(pulse_us=50, interval_us=2000):

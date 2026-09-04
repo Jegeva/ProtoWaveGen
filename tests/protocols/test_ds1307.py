@@ -1,8 +1,8 @@
 from datetime import datetime
 
-from timingdiagram.model import CaptureBuilder
-from timingdiagram.protocols.ds1307 import Ds1307
-from timingdiagram.protocols.i2c import I2CBus
+from protowavegen.model import CaptureBuilder
+from protowavegen.protocols.ds1307 import Ds1307
+from protowavegen.protocols.i2c import I2CBus
 
 
 def _setup():

@@ -1,6 +1,6 @@
-from timingdiagram.model import CaptureBuilder
-from timingdiagram.protocols.adxl345 import Adxl345
-from timingdiagram.protocols.i2c import I2CBus
+from protowavegen.model import CaptureBuilder
+from protowavegen.protocols.adxl345 import Adxl345
+from protowavegen.protocols.i2c import I2CBus
 
 
 def _setup(address=0x1D):

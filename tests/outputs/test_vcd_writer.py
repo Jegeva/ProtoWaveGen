@@ -1,5 +1,5 @@
-from timingdiagram.model import CaptureBuilder, Signal
-from timingdiagram.outputs.vcd_writer import VCDWriter
+from protowavegen.model import CaptureBuilder, Signal
+from protowavegen.outputs.vcd_writer import VCDWriter
 
 
 def test_edge_exactly_at_sample_zero_is_not_dropped(tmp_path):

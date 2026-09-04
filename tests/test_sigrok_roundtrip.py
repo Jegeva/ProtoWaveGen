@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from timingdiagram.app import TimingDiagramApplication
-from timingdiagram.config import Config
-from timingdiagram.outputs.sigrok_writer import SigrokWriter
+from protowavegen.app import TimingDiagramApplication
+from protowavegen.config import Config
+from protowavegen.outputs.sigrok_writer import SigrokWriter
 
 SIGROK_CLI = shutil.which("sigrok-cli")
 pytestmark = pytest.mark.skipif(SIGROK_CLI is None, reason="sigrok-cli not installed")

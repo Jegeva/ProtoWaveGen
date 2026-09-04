@@ -1,6 +1,6 @@
-from timingdiagram.model import CaptureBuilder
-from timingdiagram.protocols.i2c import I2CBus
-from timingdiagram.protocols.nunchuk import Nunchuk
+from protowavegen.model import CaptureBuilder
+from protowavegen.protocols.i2c import I2CBus
+from protowavegen.protocols.nunchuk import Nunchuk
 
 
 def _setup():

@@ -1,8 +1,8 @@
 import pytest
 
-from timingdiagram.model import CaptureBuilder
-from timingdiagram.protocols.jedec_cfi import JedecCfi
-from timingdiagram.protocols.spi import SpiBus
+from protowavegen.model import CaptureBuilder
+from protowavegen.protocols.jedec_cfi import JedecCfi
+from protowavegen.protocols.spi import SpiBus
 
 
 def _spi(width=1):

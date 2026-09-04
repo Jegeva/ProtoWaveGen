@@ -1,5 +1,5 @@
-from timingdiagram.model import CaptureBuilder
-from timingdiagram.protocols.nes_gamepad import NesGamepad, _BUTTON_ORDER
+from protowavegen.model import CaptureBuilder
+from protowavegen.protocols.nes_gamepad import NesGamepad, _BUTTON_ORDER
 
 
 def _setup():

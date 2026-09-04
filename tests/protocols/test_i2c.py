@@ -1,5 +1,5 @@
-from timingdiagram.model import CaptureBuilder
-from timingdiagram.protocols.i2c import I2CBus
+from protowavegen.model import CaptureBuilder
+from protowavegen.protocols.i2c import I2CBus
 
 
 def _generate(i2c, samplerate):
@@ -13,7 +13,7 @@ def test_start_condition_exact_edges():
     i2c = I2CBus("i2c0", clock_hz=100_000, addr_bits=7)
     builder, i2c = _generate(i2c, samplerate=400_000)
     i2c._ensure_bound(builder)
-    from timingdiagram.protocols.base import DriverTracker
+    from protowavegen.protocols.base import DriverTracker
 
     i2c._scl_driver = DriverTracker(builder, "i2c0.scl")
     i2c._sda_driver = DriverTracker(builder, "i2c0.sda")

@@ -1,4 +1,4 @@
-from timingdiagram.protocols.checksums import crc8_1wire, crc16_modbus
+from protowavegen.protocols.checksums import crc8_1wire, crc16_modbus
 
 
 def test_crc16_modbus_self_check_is_zero():

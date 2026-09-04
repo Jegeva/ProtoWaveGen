@@ -1,5 +1,5 @@
-from timingdiagram.model import CaptureBuilder
-from timingdiagram.protocols.spi import SpiBus
+from protowavegen.model import CaptureBuilder
+from protowavegen.protocols.spi import SpiBus
 
 
 def test_mode0_msb_first_exact_edges():

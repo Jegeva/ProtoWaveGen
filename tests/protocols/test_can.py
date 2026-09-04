@@ -1,5 +1,5 @@
-from timingdiagram.model import CaptureBuilder
-from timingdiagram.protocols.can import CanBus, _crc15, _stuff
+from protowavegen.model import CaptureBuilder
+from protowavegen.protocols.can import CanBus, _crc15, _stuff
 
 
 def test_crc15_of_all_zero_bits_is_zero():

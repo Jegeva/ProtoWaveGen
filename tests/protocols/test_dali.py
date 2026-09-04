@@ -1,5 +1,5 @@
-from timingdiagram.model import CaptureBuilder
-from timingdiagram.protocols.dali import DaliBus
+from protowavegen.model import CaptureBuilder
+from protowavegen.protocols.dali import DaliBus
 
 
 def _setup(baudrate=1200):

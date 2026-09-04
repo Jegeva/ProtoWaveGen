@@ -1,8 +1,8 @@
 import pytest
 
-from timingdiagram.model import CaptureBuilder
-from timingdiagram.protocols.seven_segment import DIGIT_PATTERNS, SevenSegmentDisplay
-from timingdiagram.protocols.spi import SpiBus
+from protowavegen.model import CaptureBuilder
+from protowavegen.protocols.seven_segment import DIGIT_PATTERNS, SevenSegmentDisplay
+from protowavegen.protocols.spi import SpiBus
 
 
 def _setup():

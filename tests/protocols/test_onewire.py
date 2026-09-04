@@ -1,5 +1,5 @@
-from timingdiagram.model import CaptureBuilder, SignalKind
-from timingdiagram.protocols.onewire import OneWireBus
+from protowavegen.model import CaptureBuilder, SignalKind
+from protowavegen.protocols.onewire import OneWireBus
 
 
 def _builder(samplerate=1_000_000):

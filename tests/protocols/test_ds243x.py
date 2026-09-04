@@ -1,7 +1,7 @@
-from timingdiagram.model import CaptureBuilder
-from timingdiagram.protocols.checksums import crc16_modbus
-from timingdiagram.protocols.ds243x import Ds243x
-from timingdiagram.protocols.onewire import OneWireBus
+from protowavegen.model import CaptureBuilder
+from protowavegen.protocols.checksums import crc16_modbus
+from protowavegen.protocols.ds243x import Ds243x
+from protowavegen.protocols.onewire import OneWireBus
 
 
 def _setup():

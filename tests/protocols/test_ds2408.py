@@ -1,6 +1,6 @@
-from timingdiagram.model import CaptureBuilder
-from timingdiagram.protocols.ds2408 import Ds2408
-from timingdiagram.protocols.onewire import OneWireBus
+from protowavegen.model import CaptureBuilder
+from protowavegen.protocols.ds2408 import Ds2408
+from protowavegen.protocols.onewire import OneWireBus
 
 
 def _setup(rom_id=None):
@@ -27,7 +27,7 @@ def test_match_rom_when_rom_id_given():
 
 
 def test_read_pio_includes_correct_crc8():
-    from timingdiagram.protocols.checksums import crc8_1wire
+    from protowavegen.protocols.checksums import crc8_1wire
 
     ds, builder = _setup()
     fh = ds.read_pio(builder, state=0xAA)

@@ -2,8 +2,8 @@ import zipfile
 
 import numpy as np
 
-from timingdiagram.model import CaptureBuilder, Signal
-from timingdiagram.outputs.sigrok_writer import SigrokWriter
+from protowavegen.model import CaptureBuilder, Signal
+from protowavegen.outputs.sigrok_writer import SigrokWriter
 
 
 def _tiny_capture():

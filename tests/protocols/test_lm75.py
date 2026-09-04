@@ -1,6 +1,6 @@
-from timingdiagram.model import CaptureBuilder
-from timingdiagram.protocols.i2c import I2CBus
-from timingdiagram.protocols.lm75 import Lm75
+from protowavegen.model import CaptureBuilder
+from protowavegen.protocols.i2c import I2CBus
+from protowavegen.protocols.lm75 import Lm75
 
 
 def _setup(address=0x48):

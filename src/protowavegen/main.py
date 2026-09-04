@@ -9,7 +9,7 @@ from .config import load_json_config, resolve_config
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="timingdiagram",
+        prog="protowavegen",
         description="Synthesize embedded-protocol timing diagrams to SVG and sigrok/VCD captures.",
     )
     parser.add_argument("--config", required=True, help="JSON scenario config file")

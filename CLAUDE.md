@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`timingdiagram` *synthesizes* (does not decode) timing diagrams for embedded
+`protowavegen` *synthesizes* (does not decode) timing diagrams for embedded
 protocols from a JSON scenario description, rendering the result to SVG
 (documentation) and to sigrok-compatible capture files (`.sr` and `.vcd`,
 importable into PulseView/sigrok-cli or GTKWave as if a real logic analyzer
@@ -16,7 +16,7 @@ captured it).
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"   # install (editable + pytest)
 .venv/bin/pytest -q                                            # run the full suite
 .venv/bin/pytest tests/protocols/test_i2c.py::test_start_condition_exact_edges  # single test
-.venv/bin/python -m timingdiagram --config examples/i2c_7bit.json \
+.venv/bin/python -m protowavegen --config examples/i2c_7bit.json \
     --format svg --format sigrok --format vcd  # run the CLI
 ```
 
@@ -43,7 +43,7 @@ output:
 
 ```bash
 for f in examples/*.json; do
-  .venv/bin/python -m timingdiagram --config "$f" || echo "FAILED $f"
+  .venv/bin/python -m protowavegen --config "$f" || echo "FAILED $f"
 done
 ```
 

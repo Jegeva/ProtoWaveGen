@@ -1,6 +1,6 @@
-from timingdiagram.model import CaptureBuilder
-from timingdiagram.protocols.sd_spi import SdCardSpi, _crc7
-from timingdiagram.protocols.spi import SpiBus
+from protowavegen.model import CaptureBuilder
+from protowavegen.protocols.sd_spi import SdCardSpi, _crc7
+from protowavegen.protocols.spi import SpiBus
 
 
 def test_crc7_known_value_cmd0():

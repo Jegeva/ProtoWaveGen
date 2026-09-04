@@ -1,7 +1,7 @@
 import xml.etree.ElementTree as ET
 
-from timingdiagram.model import CaptureBuilder, Signal
-from timingdiagram.outputs.svg_writer import SVGWriter
+from protowavegen.model import CaptureBuilder, Signal
+from protowavegen.outputs.svg_writer import SVGWriter
 
 _SVG_NS = "{http://www.w3.org/2000/svg}"
 

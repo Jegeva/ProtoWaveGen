@@ -40,7 +40,7 @@ class VCDWriter(OutputWriter):
         track_ids = dict(zip(tracks, ids[len(signal_names):]))
 
         lines = [
-            "$version timingdiagram 0.1.0 $end",
+            "$version protowavegen 0.1.0 $end",
             f"$timescale {max(round(1e12 / capture.samplerate), 1)} ps $end",
             "$scope module top $end",
         ]

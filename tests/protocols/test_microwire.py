@@ -1,5 +1,5 @@
-from timingdiagram.model import CaptureBuilder
-from timingdiagram.protocols.microwire import MicrowireBus
+from protowavegen.model import CaptureBuilder
+from protowavegen.protocols.microwire import MicrowireBus
 
 
 def _setup():

@@ -1,7 +1,7 @@
-from timingdiagram.app import TimingDiagramApplication
-from timingdiagram.config import Config
-from timingdiagram.model import CaptureBuilder
-from timingdiagram.protocols import get_protocol_class
+from protowavegen.app import TimingDiagramApplication
+from protowavegen.config import Config
+from protowavegen.model import CaptureBuilder
+from protowavegen.protocols import get_protocol_class
 
 
 def _config(protocols, outputs=None, unit_bits=None):

@@ -1,7 +1,7 @@
-from timingdiagram.model import CaptureBuilder
-from timingdiagram.protocols.checksums import crc16_modbus
-from timingdiagram.protocols.modbus_rtu import ModbusRtu
-from timingdiagram.protocols.uart import UartTransport
+from protowavegen.model import CaptureBuilder
+from protowavegen.protocols.checksums import crc16_modbus
+from protowavegen.protocols.modbus_rtu import ModbusRtu
+from protowavegen.protocols.uart import UartTransport
 
 
 def _setup():

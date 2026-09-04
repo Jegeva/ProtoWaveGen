@@ -1,6 +1,6 @@
-from timingdiagram.model import CaptureBuilder
-from timingdiagram.protocols.i2c import I2CBus
-from timingdiagram.protocols.tca6408a import Tca6408a
+from protowavegen.model import CaptureBuilder
+from protowavegen.protocols.i2c import I2CBus
+from protowavegen.protocols.tca6408a import Tca6408a
 
 
 def _setup(address=0x20):
