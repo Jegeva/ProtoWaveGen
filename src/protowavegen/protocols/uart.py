@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle, Signal
-from .base import TransportProtocol, bind_clock_samples, format_byte, register_protocol
-from .payload import decode_payload
+from .base import DriverTracker, TransportProtocol, bind_clock_samples, format_byte, register_protocol
+from .payload import decode_payload_with_floating, group_floating_by_byte
 
 _VALID_PARITY = {"none", "even", "odd", "mark", "space"}
 _VALID_STOP_BITS = {1, 1.5, 2}
@@ -13,9 +13,16 @@ _VALID_FLOW_CONTROL = {"none", "rts_cts"}
 @register_protocol("uart")
 class UartTransport(TransportProtocol):
     """Asynchronous serial: start bit, LSB-first data bits, optional parity,
-    stop bit(s). Full duplex gets independent `tx`/`rx` lines; half duplex
-    shares one `data` line and relies on the `driver` annotation (set per
-    `send()` call) to say who's talking.
+    stop bit(s). Full duplex gets independent `tx`/`rx` lines (each with a
+    single fixed owner, so the per-bit `DriverTracker` just coalesces into
+    one span per `send()` call); half duplex shares one `data` line that
+    multiple `send()` calls (potentially with different `driver=` labels)
+    take turns on — the same "shared wire" shape I2C/1-Wire/PS2 track, now
+    handled the same way here instead of only an optional whole-frame
+    static label. `driver` names the owner (defaults to `"sender"` when
+    omitted, so a half-duplex capture is never unlabeled); no protocol-
+    defined pull on any of these lines, so a `z`/`Z` floating marker always
+    needs `l`/`h` used explicitly instead.
 
     Hardware flow control (`flow_control="rts_cts"`) is modeled symbolically:
     a short RTS-then-CTS assert/release bracket around the frame, annotated
@@ -101,12 +108,16 @@ class UartTransport(TransportProtocol):
             return 1
         return 0  # space
 
-    def _send_byte(self, builder: CaptureBuilder, line: str, byte: int) -> None:
+    def _send_byte(
+        self, builder: CaptureBuilder, line: str, byte: int, tracker: DriverTracker, owner: str,
+        floating_bits: frozenset[int] = frozenset(),
+    ) -> None:
         if not (0 <= byte < (1 << self.data_bits)):
             raise ValueError(f"byte {byte} does not fit in {self.data_bits} data bits")
         spb = self._samples_per_bit
 
         builder.set_level(line, 0)  # start bit
+        tracker.set(owner)
         builder.advance(spb)
 
         ones = 0
@@ -114,13 +125,17 @@ class UartTransport(TransportProtocol):
             bit = (byte >> i) & 1  # LSB first
             ones += bit
             builder.set_level(line, bit)
+            # `i` is the shift amount; FloatingSpan's bit_index is MSB-first (0=MSB).
+            tracker.set("floating" if (7 - i) in floating_bits else owner)
             builder.advance(spb)
 
         if self.parity != "none":
             builder.set_level(line, self._parity_bit(ones))
+            tracker.set(owner)
             builder.advance(spb)
 
         builder.set_level(line, 1)  # stop bit(s)
+        tracker.set(owner)
         builder.advance(round(self.stop_bits * spb))
 
     def _flow_control_bracket(self, builder: CaptureBuilder, line: str) -> None:
@@ -149,10 +164,14 @@ class UartTransport(TransportProtocol):
         inter_byte_gap_bits: int = 0,
         labels: list[str] | None = None,
     ) -> FrameHandle:
-        data = decode_payload(data, datatype)
+        payload = decode_payload_with_floating(data, datatype, tristate=False)
+        data = payload.values
+        floating_by_byte = group_floating_by_byte(payload.floating)
         if self._samples_per_bit is None:
             self.bind_samplerate(builder.samplerate)
         line = self._line(channel)
+        owner = driver or "sender"
+        tracker = DriverTracker(builder, line)
 
         if pre_delay_bits:
             builder.advance(pre_delay_bits * self._samples_per_bit)
@@ -164,7 +183,7 @@ class UartTransport(TransportProtocol):
                 if i > 0 and inter_byte_gap_bits:
                     builder.advance(inter_byte_gap_bits * self._samples_per_bit)
                 with builder.frame() as byte_fh:
-                    self._send_byte(builder, line, byte)
+                    self._send_byte(builder, line, byte, tracker, owner, floating_by_byte.get(i, frozenset()))
                 # one frame (start+data[+parity]+stop) is UART's natural
                 # "unit" — the SVG writer bar-codes these; "field" carries
                 # the same span's human-readable byte value for verbose mode.
@@ -174,10 +193,9 @@ class UartTransport(TransportProtocol):
                     "field", label, start=byte_fh.start, end=byte_fh.end, signals=(line,),
                     value=byte,
                 )
+        tracker.close()
 
         if self.flow_control == "rts_cts":
             self._flow_control_release(builder)
-        if driver is not None:
-            builder.annotate("driver", driver, start=fh.start, end=fh.end, signals=(line,))
         builder.annotate("bitorder", "lsb", start=fh.start, end=fh.end, signals=(line,))
         return fh

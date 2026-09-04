@@ -17,9 +17,15 @@ _SIGNAL_COLOR = "#1a202c"
 _DEFAULT_UNIT_BAR_COLORS = ("#edf2f7", "#e2e8f0")
 # Assigned to distinct labels in sorted order wherever a color (not text)
 # has to carry the meaning: driver-colored waveform segments, and any
-# annotation whose text would overflow into its neighbor.
+# annotation whose text would overflow into its neighbor. 16 entries (not
+# the original 8) — a capture combining several protocols' own driver
+# vocabularies (master/slave/pullup/reader/device/host/floating/...) can
+# easily exceed 8 distinct labels; past this many, colors still repeat
+# (`i % len(_LABEL_PALETTE)`) rather than crash, but 16 covers every
+# realistic single capture without a repeat.
 _LABEL_PALETTE = (
     "#2b6cb0", "#38a169", "#d69e2e", "#c53030", "#805ad5", "#dd6b20", "#319795", "#b83280",
+    "#1a365d", "#22543d", "#742a2a", "#44337a", "#744210", "#97266d", "#2c5282", "#276749",
 )
 _LANE_FONT_SIZE = 9
 _CHAR_WIDTH_FACTOR = 0.62  # rough monospace glyph-width-to-font-size ratio

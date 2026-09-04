@@ -107,6 +107,42 @@ def test_bit_period_samples_exposed_after_first_send():
     assert uart.bit_period_samples == 10
 
 
+def test_half_duplex_default_driver_label_when_omitted():
+    uart = UartTransport("uart0", baudrate=9600, duplex="half")
+    builder = CaptureBuilder(samplerate=96000)
+    uart.register_signals(builder)
+    uart.send(builder, channel="data", data=[0x01])  # no driver= given
+    capture = builder.finish()
+    drivers = [a for a in capture.annotations if a.track == "driver"]
+    assert len(drivers) == 1 and drivers[0].label == "sender"
+
+
+def test_half_duplex_two_calls_show_distinct_driver_spans():
+    uart = UartTransport("uart0", baudrate=9600, duplex="half")
+    builder = CaptureBuilder(samplerate=96000)
+    uart.register_signals(builder)
+    uart.send(builder, channel="data", data=[0x01], driver="node-a")
+    uart.send(builder, channel="data", data=[0x02], driver="node-b")
+    capture = builder.finish()
+    drivers = [a for a in capture.annotations if a.track == "driver"]
+    assert [d.label for d in drivers] == ["node-a", "node-b"]
+
+
+def test_send_with_floating_marker_annotates_floating_and_resolves_concrete_bits():
+    uart = UartTransport("uart0", baudrate=9600, duplex="half")
+    builder = CaptureBuilder(samplerate=96000)
+    uart.register_signals(builder)
+    # "2h" -> 0x2 driven, low nibble floating-high -> 0x2F
+    uart.send(builder, channel="data", data="2h", datatype="hex", driver="node-a")
+    capture = builder.finish()
+
+    field = [a for a in capture.annotations if a.track == "field"][0]
+    assert field.data["value"] == 0x2F
+
+    floating = [a for a in capture.annotations if a.track == "driver" and a.label == "floating"]
+    assert len(floating) == 1
+
+
 def test_flow_control_adds_rts_cts_signals_and_bracket():
     uart = UartTransport("uart0", baudrate=9600, flow_control="rts_cts")
     builder = CaptureBuilder(samplerate=96000)

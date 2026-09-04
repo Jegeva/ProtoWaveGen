@@ -138,6 +138,20 @@ def _ds2408_config():
     }
 
 
+def _seven_segment_config():
+    return {
+        "samplerate": 10_000_000,
+        "protocols": [
+            {"id": "spi0", "type": "spi", "params": {"clock_hz": 1_000_000}, "operations": []},
+            {
+                "id": "seg0", "type": "seven_segment", "stack_on": "spi0",
+                "operations": [{"op": "set_digits", "patterns": [0x3F, 0x06]}],
+            },
+        ],
+        "outputs": [],
+    }
+
+
 def test_data_hex_auto_detects_single_unambiguous_operation():
     from protowavegen.config import resolve_config
     from protowavegen.main import build_arg_parser
@@ -457,3 +471,161 @@ def test_data_override_on_field_with_no_datatype_param_raises_clear_error():
     )
     with pytest.raises(ValueError, match="bits"):
         resolve_config(_ds2408_config(), args)
+
+
+def test_data_override_on_seven_segment_patterns_field_now_reachable():
+    """`patterns` (seven_segment.set_digits) had datatype/floating-marker
+    support added this session but was never added to _PAYLOAD_FIELDS —
+    unreachable via --data-target/auto-detect until now."""
+
+    from protowavegen.config import resolve_config
+    from protowavegen.main import build_arg_parser
+
+    args = build_arg_parser().parse_args(
+        ["--config", "unused.json", "--data-hex", "seg0:0:patterns:2h"]
+    )
+    resolved = resolve_config(_seven_segment_config(), args)
+    op = resolved.protocols[1]["operations"][0]
+    assert op["patterns"] == "2h" and op["datatype"] == "hex"
+
+
+def test_data_mask_byte_level_entry_marks_whole_byte_floating(tmp_path):
+    from protowavegen.config import resolve_config
+    from protowavegen.main import build_arg_parser
+
+    mask_path = tmp_path / "mask.txt"
+    mask_path.write_text("0:h")
+
+    args = build_arg_parser().parse_args(
+        ["--config", "unused.json", "--data-mask", f"uart0:0:data:{mask_path}"]
+    )
+    resolved = resolve_config(_uart_config(), args)
+    op = resolved.protocols[0]["operations"][0]
+    assert op["datatype"] == "bin"
+    assert op["data"] == "hhhhhhhh"  # data=[65], sole byte fully floating-high
+
+
+def test_data_mask_bit_level_entry_marks_single_bit(tmp_path):
+    from protowavegen.config import resolve_config
+    from protowavegen.main import build_arg_parser
+
+    mask_path = tmp_path / "mask.txt"
+    mask_path.write_text("0.3:z")
+
+    args = build_arg_parser().parse_args(
+        ["--config", "unused.json", "--data-mask", f"uart0:0:data:{mask_path}"]
+    )
+    resolved = resolve_config(_uart_config(), args)
+    op = resolved.protocols[0]["operations"][0]
+    assert op["datatype"] == "bin"
+    # data=[65]=0b01000001, bit_index 3 (0=MSB) is the 4th bit from the left -> masked
+    assert op["data"] == "010z0001"
+
+
+def test_data_mask_comma_separated_byte_and_bit_entries(tmp_path):
+    from protowavegen.config import resolve_config
+    from protowavegen.main import build_arg_parser
+
+    mask_path = tmp_path / "mask.txt"
+    mask_path.write_text("0:l,1.7:h")
+
+    args = build_arg_parser().parse_args(
+        ["--config", "unused.json", "--data-mask", f"i2c0:0:data:{mask_path}"]
+    )
+    resolved = resolve_config(_i2c_config(), args)
+    op = resolved.protocols[0]["operations"][0]
+    # i2c0 op0 data=[1, 42]=[0b00000001, 0b00101010]
+    assert op["datatype"] == "bin"
+    assert op["data"] == "llllllll" + "0010101h"
+
+
+def test_data_mask_z_resolution_against_tristate_target_resolves_via_pull(tmp_path):
+    from protowavegen.main import main
+
+    mask_path = tmp_path / "mask.txt"
+    mask_path.write_text("0:z")
+
+    rc = main(
+        [
+            "--config", "examples/i2c_7bit.json",
+            "--data-mask", f"{mask_path}",
+            "--data-target", "i2c0:0:data",
+            "--output-dir", "output",
+        ]
+    )
+    assert rc == 0  # I2C's write() already runs with tristate=True; z resolves via SDA pullup
+
+
+def test_data_mask_rejects_target_not_currently_bytes_datatype(tmp_path):
+    from protowavegen.config import resolve_config
+    from protowavegen.main import build_arg_parser
+
+    mask_path = tmp_path / "mask.txt"
+    mask_path.write_text("0:h")
+
+    args = build_arg_parser().parse_args(
+        [
+            "--config", "unused.json",
+            "--data-hex", "uart0:0:data:41",
+            "--data-mask", f"uart0:0:data:{mask_path}",
+        ]
+    )
+    with pytest.raises(ValueError, match="not 'bytes'"):
+        resolve_config(_uart_config(), args)
+
+
+def test_data_mask_applied_on_top_of_data_file(tmp_path):
+    from protowavegen.config import resolve_config
+    from protowavegen.main import build_arg_parser
+
+    raw_path = tmp_path / "payload.bin"
+    raw_path.write_bytes(bytes([0x00]))
+    mask_path = tmp_path / "mask.txt"
+    mask_path.write_text("0:h")
+
+    args = build_arg_parser().parse_args(
+        [
+            "--config", "unused.json",
+            "--data-file", f"uart0:0:data:{raw_path}",
+            "--data-mask", f"uart0:0:data:{mask_path}",
+        ]
+    )
+    resolved = resolve_config(_uart_config(), args)
+    op = resolved.protocols[0]["operations"][0]
+    assert op["datatype"] == "bin"
+    assert op["data"] == "hhhhhhhh"
+
+
+def test_data_mask_byte_index_out_of_range_raises_clear_error(tmp_path):
+    from protowavegen.config import resolve_config
+    from protowavegen.main import build_arg_parser
+
+    mask_path = tmp_path / "mask.txt"
+    mask_path.write_text("5:h")  # uart0 op0 data has only 1 byte
+
+    args = build_arg_parser().parse_args(
+        ["--config", "unused.json", "--data-mask", f"uart0:0:data:{mask_path}"]
+    )
+    with pytest.raises(ValueError, match="out of range"):
+        resolve_config(_uart_config(), args)
+
+
+def test_data_mask_end_to_end_produces_floating_annotation(tmp_path):
+    from protowavegen.main import main
+
+    mask_path = tmp_path / "mask.txt"
+    mask_path.write_text("0.0:h")
+
+    out_dir = tmp_path / "out"
+    rc = main(
+        [
+            "--config", "examples/i2c_7bit.json",
+            "--data-mask", f"{mask_path}",
+            "--data-target", "i2c0:0:data",
+            "--format", "svg",
+            "--output-dir", str(out_dir),
+        ]
+    )
+    assert rc == 0
+    svg_text = (out_dir / "capture.svg").read_text()
+    assert "floating" in svg_text

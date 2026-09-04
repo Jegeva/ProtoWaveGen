@@ -11,7 +11,7 @@ _FORMAT_EXTENSIONS = {"svg": "svg", "sigrok": "sr", "vcd": "vcd"}
 _PAYLOAD_FIELDS = {
     "data", "values", "mosi", "miso", "write_data", "read_data",
     "bits", "mosi_bits", "read_bits", "command", "answer", "byte",
-    "DALI_ADDRESS", "facility_code", "card_number",
+    "DALI_ADDRESS", "facility_code", "card_number", "patterns",
     # NOTE: plain "address" is deliberately NOT included — I2C's write/read
     # operations already use it as the (non-payload) slave-address field,
     # and this set is protocol-agnostic (shared across every protocol
@@ -177,6 +177,134 @@ def _resolve_data_target(protocols: list[dict], target: str | None) -> tuple[int
     return p_idx, op_index, op_fields[0]
 
 
+_MASK_RESOLUTIONS = {"l", "L", "h", "H", "z", "Z"}
+
+
+def _parse_data_mask(path: str) -> list[tuple[int, int | None, str]]:
+    """Parse a `--data-mask` companion file: comma/newline-separated
+    entries, each `byte_index:resolution` (whole byte) or
+    `byte_index.bit_index:resolution` (one bit, 0=MSB convention matching
+    `FloatingSpan`), resolution one of l/h/z (case preserved)."""
+
+    try:
+        with open(path) as f:
+            text = f.read()
+    except OSError as exc:
+        raise ValueError(f"--data-mask: could not read {path!r}: {exc}") from None
+
+    entries: list[tuple[int, int | None, str]] = []
+    for raw_tok in text.replace("\n", ",").split(","):
+        tok = raw_tok.strip()
+        if not tok:
+            continue
+        try:
+            position, resolution = tok.split(":")
+        except ValueError:
+            raise ValueError(
+                f"--data-mask: invalid entry {tok!r} in {path!r} "
+                "(expected 'byte_index:resolution' or 'byte_index.bit_index:resolution')"
+            ) from None
+        resolution = resolution.strip()
+        if resolution not in _MASK_RESOLUTIONS:
+            raise ValueError(
+                f"--data-mask: invalid resolution {resolution!r} in entry {tok!r} (expected l/h/z)"
+            )
+        position = position.strip()
+        if "." in position:
+            byte_str, bit_str = position.split(".")
+            try:
+                byte_index, bit_index = int(byte_str), int(bit_str)
+            except ValueError:
+                raise ValueError(f"--data-mask: invalid position {position!r} in entry {tok!r}") from None
+            if not (0 <= bit_index <= 7):
+                raise ValueError(f"--data-mask: bit index {bit_index} out of range 0-7 in entry {tok!r}")
+        else:
+            try:
+                byte_index = int(position)
+            except ValueError:
+                raise ValueError(f"--data-mask: invalid byte index {position!r} in entry {tok!r}") from None
+            bit_index = None
+        entries.append((byte_index, bit_index, resolution))
+    return entries
+
+
+def _apply_data_mask(values: list[int], mask_entries: list[tuple[int, int | None, str]]) -> str:
+    """Render `values` (a plain byte list) as a flat `bin`-datatype string,
+    substituting each mask entry's l/h/z character for the bits it covers
+    and the real 0/1 digit everywhere else — resolution happens later,
+    downstream, the same way a hand-typed `--data-bin` marker would."""
+
+    overrides: dict[tuple[int, int], str] = {}
+    for byte_index, bit_index, resolution in mask_entries:
+        if not (0 <= byte_index < len(values)):
+            raise ValueError(
+                f"--data-mask: byte index {byte_index} out of range (payload has {len(values)} byte(s))"
+            )
+        if bit_index is None:
+            for b in range(8):
+                overrides[(byte_index, b)] = resolution
+        else:
+            overrides[(byte_index, bit_index)] = resolution
+
+    chars = []
+    for byte_index, byte in enumerate(values):
+        for bit_index in range(8):
+            resolution = overrides.get((byte_index, bit_index))
+            if resolution is not None:
+                chars.append(resolution)
+            else:
+                chars.append(str((byte >> (7 - bit_index)) & 1))
+    return "".join(chars)
+
+
+def apply_data_mask(protocols: list[dict], args) -> list[dict]:
+    """Apply every `--data-mask` (second pass, after `apply_data_override`
+    has resolved every `--data-*` value override). Each mask's target must
+    currently resolve to a plain `list[int]` under datatype `"bytes"` — the
+    common shape for a `--data-file`-loaded payload too large to hand-type
+    a marker into directly."""
+
+    masks = getattr(args, "data_masks", None) or []
+    if not masks:
+        return protocols
+
+    protocols = list(protocols)
+
+    for raw_mask in masks:
+        inline_target, path = _split_inline_target(raw_mask)
+        target = inline_target if inline_target is not None else args.data_target
+        p_idx, op_idx, field = _resolve_data_target(protocols, target)
+
+        spec = dict(protocols[p_idx])
+        operations = list(spec["operations"])
+        op = dict(operations[op_idx])
+        cls = get_protocol_class(spec["type"])
+        op_name = operations[op_idx]["op"]
+        datatype_kwarg = _datatype_kwarg_name(cls, op_name, field)
+
+        current_datatype = op.get(datatype_kwarg, "bytes")
+        if current_datatype != "bytes":
+            raise ValueError(
+                f"--data-mask: {protocols[p_idx]['id']}:{op_idx}:{field} is using datatype "
+                f"{current_datatype!r}, not 'bytes' — a mask only applies to a concrete byte list"
+            )
+        values = op.get(field)
+        if not isinstance(values, list):
+            raise ValueError(
+                f"--data-mask: {protocols[p_idx]['id']}:{op_idx}:{field} is not a byte-list field "
+                f"(got {type(values).__name__})"
+            )
+
+        mask_entries = _parse_data_mask(path)
+        op[field] = _apply_data_mask(values, mask_entries)
+        op[datatype_kwarg] = "bin"
+        operations[op_idx] = op
+        spec["operations"] = operations
+        protocols[p_idx] = spec
+
+    return protocols
+
+
 def apply_data_override(protocols: list[dict], args) -> list[dict]:
     """Apply every `--data-hex`/`--data-string`/`--data-int`/`--data-bin`/
     `--data-file` override — each repeatable and independently targeted —
@@ -262,6 +390,7 @@ def resolve_config(json_cfg: dict, args) -> Config:
 
     protocols = json_cfg.get("protocols", [])
     protocols = apply_data_override(protocols, args)
+    protocols = apply_data_mask(protocols, args)
     outputs = list(json_cfg.get("outputs", []))
     unit_bits = getattr(args, "unit_bits", None) if getattr(args, "unit_bits", None) is not None else json_cfg.get("unit_bits")
     idle_margin_fraction = json_cfg.get("idle_margin_fraction", 0.02)

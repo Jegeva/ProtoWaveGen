@@ -194,6 +194,33 @@ def test_onewire_roundtrips_through_sigroks_onewire_link_decoder(tmp_path):
     assert bits == expected_bits
 
 
+def test_onewire_with_floating_marker_still_roundtrips_through_sigrok(tmp_path):
+    """Same floating-marker-resolves-to-concrete-bits guarantee as I2C/SPI
+    earlier in this file, now for 1-Wire — "hl" -> 0xF0."""
+
+    config = Config(
+        samplerate=2_000_000,
+        protocols=[
+            {
+                "id": "ow0", "type": "onewire",
+                "operations": [
+                    {"op": "reset"},
+                    {"op": "write", "data": "hl", "datatype": "hex"},
+                ],
+            }
+        ],
+        outputs=[],
+    )
+    sr_path = tmp_path / "onewire_floating.sr"
+    _write_sr(config, sr_path)
+
+    pd = "onewire_link:owr=ow0.dq"
+    assert _decode(sr_path, pd, "warnings") == []
+    bits = "".join(line.split(": ")[-1] for line in _decode(sr_path, pd, "bit"))
+    expected_bits = "".join(str((0xF0 >> i) & 1) for i in range(8))  # LSB first
+    assert bits == expected_bits
+
+
 def test_can_roundtrips_through_sigroks_can_decoder(tmp_path):
     config = Config(
         samplerate=8_000_000,
@@ -219,6 +246,29 @@ def test_can_roundtrips_through_sigroks_can_decoder(tmp_path):
     # sigrok's CAN decoder verifies the CRC itself and would warn on mismatch —
     # an empty warnings row is independent confirmation our CRC-15 and bit
     # stuffing are both correct, not just internally self-consistent.
+    assert _decode(sr_path, pd, "warnings") == []
+
+
+def test_can_with_floating_marker_still_roundtrips_through_sigrok(tmp_path):
+    """Same floating-marker-resolves-to-concrete-bits guarantee as I2C/SPI/
+    1-Wire earlier in this file, now for CAN — "hl" -> 0xF0."""
+
+    config = Config(
+        samplerate=8_000_000,
+        protocols=[
+            {
+                "id": "can0", "type": "can",
+                "params": {"bitrate": 500_000},
+                "operations": [{"op": "send", "identifier": 0x123, "data": "hl", "datatype": "hex"}],
+            }
+        ],
+        outputs=[],
+    )
+    sr_path = tmp_path / "can_floating.sr"
+    _write_sr(config, sr_path)
+
+    pd = "can:can_rx=can0.can:nominal_bitrate=500000"
+    assert _decode(sr_path, pd, "data") == ["Data byte 0: 0xf0"]
     assert _decode(sr_path, pd, "warnings") == []
 
 
@@ -341,6 +391,42 @@ def test_wiegand_roundtrips_through_sigroks_wiegand_decoder(tmp_path):
     assert bits == expected
 
 
+def test_wiegand_with_floating_marker_still_roundtrips_through_sigrok(tmp_path):
+    """Same floating-marker-resolves-to-concrete-bits guarantee as
+    earlier in this file, now for Wiegand's `send_card_26bit` — facility
+    code "0000110z" resolves via TRISTATE pull-high (z->1) to 13, same as
+    the plain-int 13 would."""
+
+    config = Config(
+        samplerate=1_000_000,
+        protocols=[
+            {
+                "id": "wg0", "type": "wiegand", "params": {"pulse_us": 1000, "interval_us": 20000},
+                "operations": [
+                    {
+                        "op": "send_card_26bit",
+                        "facility_code": "0000110z", "facility_code_datatype": "bits",
+                        "card_number": 34567,
+                    },
+                ],
+            }
+        ],
+        outputs=[],
+    )
+    sr_path = tmp_path / "wiegand_floating.sr"
+    _write_sr(config, sr_path)
+
+    decoded = _decode(sr_path, "wiegand:d0=wg0.d0:d1=wg0.d1:bitwidth_ms=1", "bits")
+    bits = "".join(decoded)
+
+    facility_code = 13  # "0000110z" -> 0b0000110(1) since z resolves pull-high
+    data_bits = [(facility_code >> i) & 1 for i in reversed(range(8))] + [(34567 >> i) & 1 for i in reversed(range(16))]
+    leading_parity = sum(data_bits[:12]) % 2
+    trailing_parity = 1 - (sum(data_bits[12:]) % 2)
+    expected = "".join(str(b) for b in [leading_parity, *data_bits, trailing_parity])
+    assert bits == expected
+
+
 def test_dali_roundtrips_through_sigroks_dali_decoder(tmp_path):
     config = Config(
         samplerate=12_000,
@@ -363,6 +449,32 @@ def test_dali_roundtrips_through_sigroks_dali_decoder(tmp_path):
     assert "Raw data: FE" in decoded
     assert "Command: 254 (Application Specific Command 254)" in decoded
     assert "Reply: FF" in decoded
+
+
+def test_dali_with_floating_marker_still_roundtrips_through_sigrok(tmp_path):
+    """Same floating-marker-resolves-to-concrete-bits guarantee as
+    earlier in this file, now for DALI — "2h" -> 0x2F."""
+
+    config = Config(
+        samplerate=12_000,
+        protocols=[
+            {
+                "id": "dali0", "type": "dali",
+                "operations": [
+                    {
+                        "op": "send_forward_frame",
+                        "DALI_ADDRESS": "2h", "DALI_ADDRESS_datatype": "hex", "command": 0xFE,
+                    },
+                ],
+            }
+        ],
+        outputs=[],
+    )
+    sr_path = tmp_path / "dali_floating.sr"
+    _write_sr(config, sr_path)
+
+    decoded = _decode(sr_path, "dali:dali=dali0.dali", None)
+    assert "Raw data: 2F" in decoded
 
 
 def test_microwire_93xx_roundtrips_through_sigroks_eeprom93xx_decoder(tmp_path):
@@ -407,6 +519,48 @@ def test_microwire_93xx_roundtrips_through_sigroks_eeprom93xx_decoder(tmp_path):
     ]
 
 
+def test_microwire_with_floating_marker_still_roundtrips_through_sigrok(tmp_path):
+    """Same floating-marker-resolves-to-concrete-bits guarantee as
+    earlier in this file, now for the bare Microwire transport's own
+    `datatype="bits"` support — `microwire_93xx` itself has no datatype
+    capability, so this exercises `MicrowireBus.transfer()` directly
+    (same shape as `examples/microwire_basic.json`), not the stacked
+    EEPROM device. Compares against a plain-digit config resolving to the
+    exact same value ("1100hh10" and "11001110" both -> 0xCE) rather than
+    hand-deriving the decoder's own per-bit annotation order/format —
+    if floating resolution is correct, sigrok must decode both configs
+    identically."""
+
+    def _config(mosi_bits: str) -> Config:
+        return Config(
+            samplerate=10_000_000,
+            protocols=[
+                {
+                    "id": "mw0", "type": "microwire", "params": {"clock_hz": 1_000_000},
+                    "operations": [
+                        {
+                            "op": "transfer",
+                            "mosi_bits": mosi_bits, "read_bits": "0101101001011010",
+                            "datatype": "bits",
+                        },
+                    ],
+                }
+            ],
+            outputs=[],
+        )
+
+    floating_path = tmp_path / "microwire_floating.sr"
+    plain_path = tmp_path / "microwire_plain.sr"
+    _write_sr(_config("1100hh10"), floating_path)
+    _write_sr(_config("11001110"), plain_path)
+
+    pd = "microwire:cs=mw0.cs:sk=mw0.clk:si=mw0.di:so=mw0.do"
+    floating_decoded = _decode(floating_path, pd, None, decoder_id="microwire")
+    plain_decoded = _decode(plain_path, pd, None, decoder_id="microwire")
+    assert floating_decoded == plain_decoded
+    assert floating_decoded  # sanity: decoder actually produced output
+
+
 def test_ps2_roundtrips_through_sigroks_ps2_decoder(tmp_path):
     """sigrok's `ps2` decoder has an off-by-one in its bit-count flush
     check: it only emits a frame's decoded word once it sees a *12th*
@@ -440,6 +594,33 @@ def test_ps2_roundtrips_through_sigroks_ps2_decoder(tmp_path):
     assert _decode(sr_path, pd, "parity-ok") == ["Parity OK"]
     assert _decode(sr_path, pd, "parity-err") == []
     assert _decode(sr_path, pd, "stop-bit") == ["Stop bit"]
+
+
+def test_ps2_with_floating_marker_still_roundtrips_through_sigrok(tmp_path):
+    """Same floating-marker-resolves-to-concrete-bits guarantee as
+    earlier in this file, now for PS/2 — "zz" resolves via TRISTATE
+    pull-high to 0xFF. Second frame only to flush the first, same
+    decoder-off-by-one workaround as the baseline test above."""
+
+    config = Config(
+        samplerate=1_000_000,
+        protocols=[
+            {
+                "id": "ps2_0", "type": "ps2",
+                "operations": [
+                    {"op": "send_from_device", "byte": "zz", "datatype": "hex"},
+                    {"op": "send_from_device", "byte": 0x00},  # trailing frame only to flush the first
+                ],
+            }
+        ],
+        outputs=[],
+    )
+    sr_path = tmp_path / "ps2_floating.sr"
+    _write_sr(config, sr_path)
+
+    pd = "ps2:clk=ps2_0.clock:data=ps2_0.data"
+    assert _decode(sr_path, pd, "word") == ["Data: ff"]
+    assert _decode(sr_path, pd, "parity-ok") == ["Parity OK"]
 
 
 def test_lin_roundtrips_through_sigroks_lin_decoder(tmp_path):

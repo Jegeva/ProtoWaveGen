@@ -49,20 +49,25 @@ class DaliBus(TransportProtocol):
         return [Signal(self.sig("dali"), initial_level=1)]
 
     def _manchester_bit(
-        self, builder: CaptureBuilder, bit: int, tracker: DriverTracker, floating: bool = False
+        self, builder: CaptureBuilder, bit: int, tracker: DriverTracker, owner: str, floating: bool = False
     ) -> None:
         """G.E. Thomas Manchester: a `1` is a low->high transition at
         bit-center; a `0` is high->low — each half-bit is one clocked
-        level, so this is one `set_level`+`advance` pair per half."""
+        level, so this is one `set_level`+`advance` pair per half.
+        `owner` says who's actually transmitting this frame — `"master"`
+        for the controller (`send_forward_frame`) or `"slave"` for the
+        ballast (`send_backward_frame`), since both drive the same `dali`
+        line at different times and this file has no other way to tell
+        the two apart in the annotation track."""
 
         dali = self.sig("dali")
         half = self._bit_samples // 2
         first, second = (0, 1) if bit else (1, 0)
         builder.set_level(dali, first)
-        tracker.set("floating" if floating else "master")
+        tracker.set("floating" if floating else owner)
         builder.advance(half)
         builder.set_level(dali, second)
-        tracker.set("floating" if floating else "master")
+        tracker.set("floating" if floating else owner)
         builder.advance(self._bit_samples - half)
 
     def _send_bits(
@@ -70,10 +75,11 @@ class DaliBus(TransportProtocol):
         builder: CaptureBuilder,
         bits: list[int],
         tracker: DriverTracker,
+        owner: str,
         floating_positions: frozenset[int] = frozenset(),
     ) -> None:
         for i, bit in enumerate(bits):
-            self._manchester_bit(builder, bit, tracker, floating=i in floating_positions)
+            self._manchester_bit(builder, bit, tracker, owner, floating=i in floating_positions)
 
     def send_forward_frame(
         self, builder: CaptureBuilder, *, DALI_ADDRESS: int, command: int,
@@ -104,16 +110,16 @@ class DaliBus(TransportProtocol):
         tracker = DriverTracker(builder, dali)
 
         with builder.frame() as fh:
-            self._send_bits(builder, [1], tracker)  # START
+            self._send_bits(builder, [1], tracker, "master")  # START
             with builder.frame() as addr_fh:
-                self._send_bits(builder, addr_bits, tracker, addr_floating)
+                self._send_bits(builder, addr_bits, tracker, "master", addr_floating)
             builder.annotate("unit", "byte", start=addr_fh.start, end=addr_fh.end, signals=(dali,))
             builder.annotate(
                 "field", f"ADDR=0x{address:02X}", start=addr_fh.start, end=addr_fh.end, signals=(dali,),
                 value=address,
             )
             with builder.frame() as cmd_fh:
-                self._send_bits(builder, cmd_bits, tracker, cmd_floating)
+                self._send_bits(builder, cmd_bits, tracker, "master", cmd_floating)
             builder.annotate("unit", "byte", start=cmd_fh.start, end=cmd_fh.end, signals=(dali,))
             builder.annotate(
                 "field", f"CMD=0x{command:02X}", start=cmd_fh.start, end=cmd_fh.end, signals=(dali,),
@@ -137,16 +143,16 @@ class DaliBus(TransportProtocol):
         tracker = DriverTracker(builder, dali)
 
         with builder.frame() as fh:
-            self._send_bits(builder, [1], tracker)  # START
+            self._send_bits(builder, [1], tracker, "slave")  # START
             with builder.frame() as ans_fh:
-                self._send_bits(builder, answer_bits, tracker, answer_floating)
+                self._send_bits(builder, answer_bits, tracker, "slave", answer_floating)
             builder.annotate("unit", "byte", start=ans_fh.start, end=ans_fh.end, signals=(dali,))
             builder.annotate(
                 "field", f"ANSWER=0x{answer:02X}", start=ans_fh.start, end=ans_fh.end, signals=(dali,),
                 value=answer,
             )
             builder.set_level(dali, 1)
-            tracker.set("master")
+            tracker.set("slave")
             builder.advance(2 * self._bit_samples)
         tracker.close()
 

@@ -83,6 +83,30 @@ def test_driver_spans_color_the_waveform_and_produce_a_legend_not_a_lane(tmp_pat
     assert "driver" not in texts  # no generic annotation lane for the driver track
 
 
+def test_more_than_eight_distinct_driver_labels_get_distinct_colors(tmp_path):
+    # a capture combining several protocols' own driver vocabularies can
+    # easily exceed 8 distinct labels — the palette must not repeat colors
+    # for any realistic single capture (16 entries, see svg_writer.py).
+    b = CaptureBuilder(samplerate=1000)
+    b.register_signal(Signal("sda", initial_level=1))
+    labels = [f"driver{i}" for i in range(12)]
+    t = 0
+    for label in labels:
+        b.set_level("sda", t % 2)
+        b.advance(10)
+        b.annotate("driver", label, start=t, end=t + 10, signals=("sda",))
+        t += 10
+    capture = b.finish()
+
+    path = tmp_path / "out.svg"
+    SVGWriter().write(capture, path)
+
+    legend_swatches = [r for r in _rects(path) if r.get("width") == "10" and r.get("height") == "10"]
+    colors = [r.get("fill") for r in legend_swatches]
+    assert len(colors) == len(labels)
+    assert len(set(colors)) == len(labels)  # every label gets its own distinct color
+
+
 def test_unit_annotations_render_as_background_bands_not_a_lane(tmp_path):
     b = CaptureBuilder(samplerate=1000)
     b.register_signal(Signal("a"))

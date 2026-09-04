@@ -19,6 +19,20 @@ _DATA_OVERRIDE_DATATYPES = {
 }
 
 
+class _DataMaskAction(argparse.Action):
+    """Collects every `--data-mask` occurrence into its own `data_masks`
+    list, separate from `data_overrides` — masks apply in a second pass
+    after every `--data-*` value override has resolved, so they can't be
+    mixed into that chain's ordering/conflict logic."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        masks = getattr(namespace, "data_masks", None)
+        if masks is None:
+            masks = []
+            setattr(namespace, "data_masks", masks)
+        masks.append(values)
+
+
 class _DataOverrideAction(argparse.Action):
     """Collects every `--data-hex`/`--data-string`/`--data-int`/`--data-bin`
     occurrence, across all four flags, into one shared `data_overrides` list
@@ -97,6 +111,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Override an operation's payload with raw bytes read from a file (CWD-relative, "
         "same as --config). No floating-marker capability of its own (raw bytes only). "
         "Repeatable/chainable, same inline-target syntax as --data-hex.",
+    )
+    parser.add_argument(
+        "--data-mask", action=_DataMaskAction, dest="data_masks", metavar="[TARGET:]PATH",
+        help="Mark byte/bit positions of an already-resolved plain-bytes payload (e.g. one "
+        "loaded via --data-file) as floating, from a companion mask file: comma/newline- "
+        "separated entries, each 'byte_index:resolution' (whole byte) or "
+        "'byte_index.bit_index:resolution' (one bit, 0=MSB), resolution one of l/h/z (e.g. "
+        "'3:h,7:l,10.3:z'). Applied after every --data-* value override resolves; the "
+        "target's current datatype must be 'bytes'. Repeatable, same inline-target syntax "
+        "as --data-hex.",
     )
     parser.add_argument(
         "--data-target", dest="data_target", default=None,

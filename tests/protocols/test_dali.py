@@ -13,7 +13,7 @@ def _setup(baudrate=1200):
 def test_manchester_bit_1_is_low_to_high_transition():
     dali, builder = _setup()
     dali._ensure_bound(builder)
-    dali._manchester_bit(builder, 1, DriverTracker(builder, "dali0.dali"))
+    dali._manchester_bit(builder, 1, DriverTracker(builder, "dali0.dali"), "master")
     capture = builder.finish()
     line = "dali0.dali"
     assert capture.edges[line] == ((0, 1), (0, 0), (5, 1))  # low half, then high half
@@ -22,7 +22,7 @@ def test_manchester_bit_1_is_low_to_high_transition():
 def test_manchester_bit_0_is_high_to_low_transition():
     dali, builder = _setup()
     dali._ensure_bound(builder)
-    dali._manchester_bit(builder, 0, DriverTracker(builder, "dali0.dali"))
+    dali._manchester_bit(builder, 0, DriverTracker(builder, "dali0.dali"), "master")
     capture = builder.finish()
     line = "dali0.dali"
     assert capture.edges[line] == ((0, 1), (5, 0))  # starts high (idle), drops at half-bit
@@ -49,6 +49,20 @@ def test_backward_frame_structure():
     assert labels == ["ANSWER=0xFF"]
     # START(1) + ANSWER(8) + 2 stop bits = 11 bit periods
     assert capture.duration_samples == 11 * 10
+
+
+def test_forward_frame_driver_is_master_backward_frame_driver_is_slave():
+    dali, builder = _setup()
+    dali.send_forward_frame(builder, DALI_ADDRESS=1, command=254)
+    capture = builder.finish()
+    drivers = {a.label for a in capture.annotations if a.track == "driver"}
+    assert drivers == {"master"}
+
+    dali2, builder2 = _setup()
+    dali2.send_backward_frame(builder2, answer=0xFF)
+    capture2 = builder2.finish()
+    drivers2 = {a.label for a in capture2.annotations if a.track == "driver"}
+    assert drivers2 == {"slave"}
 
 
 def test_forward_frame_with_floating_marker_annotates_floating_and_resolves_concrete_bits():
