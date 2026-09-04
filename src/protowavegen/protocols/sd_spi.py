@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle
-from .base import StackedProtocol, format_byte, register_protocol
+from .base import StackedProtocol, decode_payload, format_byte, register_protocol
 from .spi import SpiBus
 
 _CRC7_POLY = 0x09
@@ -74,11 +74,12 @@ class SdCardSpi(StackedProtocol):
         self._send_command(builder, cmd=55, arg=0, response=[0x01], response_label="R1")
         return self._send_command(builder, cmd=41, arg=0x40000000, response=[0x00], response_label="R1=READY")
 
-    def read_block(self, builder: CaptureBuilder, *, address: int, data: list[int]) -> FrameHandle:
+    def read_block(self, builder: CaptureBuilder, *, address: int, data, datatype: str = "bytes") -> FrameHandle:
         """`data` is the synthesized block contents (512 bytes for a real
         card, any length here) — this tool generates rather than senses
         real flash contents."""
 
+        data = decode_payload(data, datatype)
         self._send_command(builder, cmd=17, arg=address, response=[0x00], response_label="R1=OK")
         mosi = [0xFF] * (1 + len(data) + 2)
         miso = [_DATA_START_TOKEN, *data, 0x00, 0x00]  # CRC16 placeholder, not computed

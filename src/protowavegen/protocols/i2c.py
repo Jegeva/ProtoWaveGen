@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle, Signal, SignalKind
-from .base import DriverTracker, TransportProtocol, format_byte, register_protocol
+from .base import DriverTracker, TransportProtocol, decode_payload, format_byte, register_protocol
 
 _VALID_ADDR_BITS = {7, 10}
 
@@ -195,7 +195,7 @@ class I2CBus(TransportProtocol):
     # -- public operations (JSON `op` targets) ------------------------------
 
     def write(
-        self, builder: CaptureBuilder, *, address: int, data: list[int], nack: bool = False,
+        self, builder: CaptureBuilder, *, address: int, data, datatype: str = "bytes", nack: bool = False,
         labels: list[str] | None = None,
     ) -> FrameHandle:
         """`labels`, one per data byte, overrides the default `format_byte`
@@ -204,6 +204,7 @@ class I2CBus(TransportProtocol):
         annotation over the same range (same reasoning as `UartTransport
         .send`'s `labels` param)."""
 
+        data = decode_payload(data, datatype)
         self._ensure_bound(builder)
         self._scl_driver = DriverTracker(builder, self.sig("scl"))
         self._sda_driver = DriverTracker(builder, self.sig("sda"))
@@ -226,7 +227,8 @@ class I2CBus(TransportProtocol):
         return fh
 
     def write_then_read(
-        self, builder: CaptureBuilder, *, address: int, write_data: list[int], read_data: list[int],
+        self, builder: CaptureBuilder, *, address: int, write_data, read_data,
+        datatype: str = "bytes",
         nack_last: bool = True, write_labels: list[str] | None = None, read_labels: list[str] | None = None,
     ) -> FrameHandle:
         """The common "set a register pointer, then read it back" idiom:
@@ -235,8 +237,11 @@ class I2CBus(TransportProtocol):
         separate transactions with a STOP/START between them. Most sensors
         (LM75-style pointer registers, EEPROM random reads, burst reads)
         actually do this rather than a plain STOP-separated pair.
-        `write_labels`/`read_labels` work like `write()`'s `labels`."""
+        `write_labels`/`read_labels` work like `write()`'s `labels`.
+        `datatype` applies to both `write_data` and `read_data`."""
 
+        write_data = decode_payload(write_data, datatype)
+        read_data = decode_payload(read_data, datatype)
         self._ensure_bound(builder)
         self._scl_driver = DriverTracker(builder, self.sig("scl"))
         self._sda_driver = DriverTracker(builder, self.sig("sda"))
@@ -267,9 +272,10 @@ class I2CBus(TransportProtocol):
         return fh
 
     def read(
-        self, builder: CaptureBuilder, *, address: int, data: list[int], nack_last: bool = True,
+        self, builder: CaptureBuilder, *, address: int, data, datatype: str = "bytes", nack_last: bool = True,
         labels: list[str] | None = None,
     ) -> FrameHandle:
+        data = decode_payload(data, datatype)
         self._ensure_bound(builder)
         self._scl_driver = DriverTracker(builder, self.sig("scl"))
         self._sda_driver = DriverTracker(builder, self.sig("sda"))

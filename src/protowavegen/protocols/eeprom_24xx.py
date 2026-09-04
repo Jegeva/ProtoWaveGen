@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle
-from .base import StackedProtocol, format_byte, register_protocol
+from .base import StackedProtocol, decode_payload, format_byte, register_protocol
 from .i2c import I2CBus
 
 
@@ -49,11 +49,14 @@ class Eeprom24xx(StackedProtocol):
     def write_byte(self, builder: CaptureBuilder, *, word_addr: int, value: int) -> FrameHandle:
         return self.write_page(builder, word_addr=word_addr, values=[value])
 
-    def read_sequential(self, builder: CaptureBuilder, *, word_addr: int, values: list[int]) -> FrameHandle:
+    def read_sequential(
+        self, builder: CaptureBuilder, *, word_addr: int, values, datatype: str = "bytes"
+    ) -> FrameHandle:
         """`values` is what the EEPROM synthetically "contains" at
         `word_addr` onward — this tool generates rather than senses real
         memory contents, so the caller supplies them."""
 
+        values = decode_payload(values, datatype)
         addr_bytes = self._addr_bytes(word_addr)
         return self.transport.write_then_read(
             builder, address=self.address, write_data=addr_bytes, read_data=values,

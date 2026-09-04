@@ -28,6 +28,23 @@ def test_start_condition_exact_edges():
     assert capture.edges["i2c0.scl"] == ((0, 1), (2, 0))
 
 
+def test_write_hex_datatype_matches_equivalent_bytes():
+    i2c_hex = I2CBus("i2c0", clock_hz=100_000, addr_bits=7)
+    builder_hex = CaptureBuilder(samplerate=4_000_000)
+    i2c_hex.register_signals(builder_hex)
+    i2c_hex.write(builder_hex, address=0x48, data="012a", datatype="hex")
+    capture_hex = builder_hex.finish()
+
+    i2c_bytes = I2CBus("i2c0", clock_hz=100_000, addr_bits=7)
+    builder_bytes = CaptureBuilder(samplerate=4_000_000)
+    i2c_bytes.register_signals(builder_bytes)
+    i2c_bytes.write(builder_bytes, address=0x48, data=[0x01, 0x2A])
+    capture_bytes = builder_bytes.finish()
+
+    assert capture_hex.edges["i2c0.sda"] == capture_bytes.edges["i2c0.sda"]
+    assert capture_hex.edges["i2c0.scl"] == capture_bytes.edges["i2c0.scl"]
+
+
 def test_open_drain_driver_annotations_never_call_a_high_level_driven():
     """Core semantic the user asked for: level 1 on SCL/SDA is always the
     pullup releasing the line, never a device "driving high"."""

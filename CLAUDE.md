@@ -188,6 +188,16 @@ Everything flows through one pipeline, orchestrated by
   (also used for CAN's per-role, per-data-byte annotations covering a
   post-bit-stuffing span) is how every stacked/composite protocol here
   avoids that.
+- Operation payload fields (UART `send`'s `data`, I2C `write`/`read`'s
+  `data`, SPI `transfer`'s `mosi`/`miso`, and similar `list[int]` byte
+  parameters across the stacked protocols) accept an optional sibling
+  `"datatype"` field: `"bytes"` (default, the original JSON int-array
+  form), `"text"` (a JSON string, UTF-8-encoded), or `"hex"` (a hex-digit
+  string decoded via `bytes.fromhex`). Normalization happens via
+  `decode_payload()` (`base.py`), called at the top of each JSON-facing
+  operation method — see `examples/uart_basic.json` (`"datatype": "text"`)
+  and `examples/sd_spi_basic.json` (`"datatype": "hex"`) for the two forms
+  in use; every other example still uses the plain int-array default.
 - 27 protocols are implemented (one file each under `protocols/`, one
   `<name>_basic.json` each under `examples/`). Six are `TransportProtocol`s
   with their own physical-layer bit timing: **UART** (`uart.py`), **I2C**

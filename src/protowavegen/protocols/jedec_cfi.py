@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle
-from .base import StackedProtocol, format_byte, register_protocol
+from .base import StackedProtocol, decode_payload, format_byte, register_protocol
 from .spi import SpiBus
 
 _JEDEC_ID_OPCODE = 0x9F
@@ -42,11 +42,12 @@ class JedecCfi(StackedProtocol):
         ]
         return self.transport.transfer(builder, mosi=mosi, miso=miso, labels=labels)
 
-    def read(self, builder: CaptureBuilder, *, address: int, data: list[int]) -> FrameHandle:
+    def read(self, builder: CaptureBuilder, *, address: int, data, datatype: str = "bytes") -> FrameHandle:
         """Standard SPI-NOR READ (0x03): opcode + 3-byte address, then the
         flash shifts back `len(data)` bytes (synthesized, since this tool
         generates rather than senses real flash contents)."""
 
+        data = decode_payload(data, datatype)
         if not (0 <= address < (1 << 24)):
             raise ValueError(f"address {address} does not fit in 3 bytes")
         addr_bytes = [(address >> 16) & 0xFF, (address >> 8) & 0xFF, address & 0xFF]

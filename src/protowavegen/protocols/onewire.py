@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle, Signal, SignalKind
-from .base import DriverTracker, TransportProtocol, format_byte, register_protocol
+from .base import DriverTracker, TransportProtocol, decode_payload, format_byte, register_protocol
 
 
 @register_protocol("onewire")
@@ -130,12 +130,13 @@ class OneWireBus(TransportProtocol):
         return fh
 
     def write(
-        self, builder: CaptureBuilder, *, data: list[int], labels: list[str] | None = None
+        self, builder: CaptureBuilder, *, data, datatype: str = "bytes", labels: list[str] | None = None
     ) -> FrameHandle:
         """`labels`, one per byte, overrides the default `format_byte`
         display — same reasoning as `UartTransport.send`'s `labels` param,
         for a stacked protocol's ROM/function command bytes."""
 
+        data = decode_payload(data, datatype)
         self._ensure_bound(builder)
         dq = self.sig("dq")
         tracker = DriverTracker(builder, dq)
@@ -154,12 +155,13 @@ class OneWireBus(TransportProtocol):
         return fh
 
     def read(
-        self, builder: CaptureBuilder, *, data: list[int], labels: list[str] | None = None
+        self, builder: CaptureBuilder, *, data, datatype: str = "bytes", labels: list[str] | None = None
     ) -> FrameHandle:
         """`data` is the byte sequence being synthesized as the target's
         response — this tool generates diagrams, it doesn't sense a real
         device, so the bytes "read back" are supplied by the caller."""
 
+        data = decode_payload(data, datatype)
         self._ensure_bound(builder)
         dq = self.sig("dq")
         tracker = DriverTracker(builder, dq)

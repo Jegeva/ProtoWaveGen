@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle
-from .base import StackedProtocol, format_byte, register_protocol
+from .base import StackedProtocol, decode_payload, format_byte, register_protocol
 from .checksums import crc16_modbus
 from .onewire import OneWireBus
 from .onewire_rom import address_rom
@@ -34,7 +34,8 @@ class Ds243x(StackedProtocol):
         super().__init__(node_id, transport, operations)
         self.rom_id = rom_id
 
-    def write_memory(self, builder: CaptureBuilder, *, address: int, data: list[int]) -> FrameHandle:
+    def write_memory(self, builder: CaptureBuilder, *, address: int, data, datatype: str = "bytes") -> FrameHandle:
+        data = decode_payload(data, datatype)
         addr_lo, addr_hi = address & 0xFF, (address >> 8) & 0xFF
         ending_offset = (len(data) - 1) & 0x1F
 
@@ -63,9 +64,10 @@ class Ds243x(StackedProtocol):
             labels=["CMD=COPY_SP", f"TA1=0x{addr_lo:02X}", f"TA2=0x{addr_hi:02X}", f"E/S=0x{ending_offset:02X}"],
         )
 
-    def read_memory(self, builder: CaptureBuilder, *, address: int, data: list[int]) -> FrameHandle:
+    def read_memory(self, builder: CaptureBuilder, *, address: int, data, datatype: str = "bytes") -> FrameHandle:
         """`data` is the synthesized memory contents at `address` onward."""
 
+        data = decode_payload(data, datatype)
         addr_lo, addr_hi = address & 0xFF, (address >> 8) & 0xFF
         address_rom(self.transport, builder, self.rom_id)
         self.transport.write(

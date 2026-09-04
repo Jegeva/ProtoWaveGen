@@ -6,7 +6,7 @@
       "id": "sd0", "type": "sd_spi", "stack_on": "spi0",
       "operations": [
         { "op": "init" },
-        { "op": "read_block", "address": 4096, "data": [222, 173, 190, 239] }
+        { "op": "read_block", "address": 4096, "data": "deadbeef", "datatype": "hex" }
       ]
     }
   ],

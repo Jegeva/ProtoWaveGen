@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle, Signal
-from .base import TransportProtocol, format_byte, register_protocol
+from .base import TransportProtocol, decode_payload, format_byte, register_protocol
 
 _VALID_PARITY = {"none", "even", "odd", "mark", "space"}
 _VALID_STOP_BITS = {1, 1.5, 2}
@@ -147,12 +147,14 @@ class UartTransport(TransportProtocol):
         builder: CaptureBuilder,
         *,
         channel: str = "tx",
-        data: list[int],
+        data,
+        datatype: str = "bytes",
         driver: str | None = None,
         pre_delay_bits: int = 0,
         inter_byte_gap_bits: int = 0,
         labels: list[str] | None = None,
     ) -> FrameHandle:
+        data = decode_payload(data, datatype)
         if self._samples_per_bit is None:
             self.bind_samplerate(builder.samplerate)
         line = self._line(channel)

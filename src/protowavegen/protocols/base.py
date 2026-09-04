@@ -44,6 +44,24 @@ def format_byte(byte: int) -> str:
     return f"0x{byte:02X}"
 
 
+def decode_payload(value, datatype: str = "bytes") -> list[int]:
+    """Normalize a JSON operation's payload field into a `list[int]`
+    regardless of how the config author chose to write it: `"bytes"`
+    (default) is the original `list[int]` form, `"text"` is a JSON string
+    UTF-8-encoded, `"hex"` is a hex-digit string decoded via
+    `bytes.fromhex`. Called at each JSON-facing operation method's entry —
+    every existing per-byte validation downstream (range checks, CRCs,
+    `format_byte()` display) then runs unchanged on the returned ints."""
+
+    if datatype == "bytes":
+        return list(value)
+    if datatype == "text":
+        return list(value.encode("utf-8"))
+    if datatype == "hex":
+        return list(bytes.fromhex(value))
+    raise ValueError(f"unknown datatype {datatype!r} (expected 'bytes', 'text', or 'hex')")
+
+
 class Protocol(ABC):
     """Base for every protocol node, transport or stacked.
 

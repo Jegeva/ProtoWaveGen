@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle, Signal
-from .base import DriverTracker, TransportProtocol, format_byte, register_protocol
+from .base import DriverTracker, TransportProtocol, decode_payload, format_byte, register_protocol
 
 _CRC15_POLY = 0x4599
 
@@ -146,10 +146,10 @@ class CanBus(TransportProtocol):
         return bits, roles
 
     def send(
-        self, builder: CaptureBuilder, *, identifier: int, data: list[int] | None = None, rtr: bool = False
+        self, builder: CaptureBuilder, *, identifier: int, data=None, datatype: str = "bytes", rtr: bool = False
     ) -> FrameHandle:
         self._ensure_bound(builder)
-        data = data or []
+        data = decode_payload(data, datatype) if data else []
         if not (0 <= len(data) <= 8):
             raise ValueError(f"CAN data field is 0-8 bytes, got {len(data)}")
 

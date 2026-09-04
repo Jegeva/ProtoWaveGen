@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle
-from .base import StackedProtocol, register_protocol
+from .base import StackedProtocol, decode_payload, register_protocol
 from .uart import UartTransport
 
 _VALID_CHECKSUM = {"classic", "enhanced"}
@@ -50,8 +50,9 @@ class LinBus(StackedProtocol):
         return (~total) & 0xFF
 
     def send_frame(
-        self, builder: CaptureBuilder, *, frame_id: int, data: list[int], checksum: str = "enhanced"
+        self, builder: CaptureBuilder, *, frame_id: int, data, datatype: str = "bytes", checksum: str = "enhanced"
     ) -> FrameHandle:
+        data = decode_payload(data, datatype)
         if not (0 <= len(data) <= 8):
             raise ValueError(f"LIN data field is 0-8 bytes, got {len(data)}")
         if self.transport.bit_period_samples is None:

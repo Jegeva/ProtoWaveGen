@@ -29,6 +29,17 @@ def test_full_duplex_lsb_first_no_parity_one_stop_bit():
     assert len(bitorder) == 1 and bitorder[0].label == "lsb"
 
 
+def test_send_text_datatype_matches_equivalent_bytes():
+    uart_text = UartTransport("uart0", baudrate=9600, data_bits=8, parity="none", stop_bits=1)
+    capture_text, _ = _generate(uart_text, samplerate=96000, data="Hi", datatype="text")
+
+    uart_bytes = UartTransport("uart0", baudrate=9600, data_bits=8, parity="none", stop_bits=1)
+    capture_bytes, _ = _generate(uart_bytes, samplerate=96000, data=[0x48, 0x69])
+
+    assert capture_text.edges["uart0.tx"] == capture_bytes.edges["uart0.tx"]
+    assert capture_text.duration_samples == capture_bytes.duration_samples
+
+
 def test_even_parity_bit_computed_correctly():
     uart = UartTransport("uart0", baudrate=9600, parity="even", stop_bits=1)
     # 0x0F = 0b00001111 has four 1-bits -> even parity bit is 0

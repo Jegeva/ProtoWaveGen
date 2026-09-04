@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle, Signal
-from .base import TransportProtocol, format_byte, register_protocol
+from .base import TransportProtocol, decode_payload, format_byte, register_protocol
 
 _VALID_WIDTHS = {1, 4, 8}
 _VALID_MODES = {0, 1, 2, 3}
@@ -123,21 +123,23 @@ class SpiBus(TransportProtocol):
         self,
         builder: CaptureBuilder,
         *,
-        mosi: list[int] | None = None,
-        miso: list[int] | None = None,
+        mosi=None,
+        miso=None,
+        datatype: str = "bytes",
         labels: list[str] | None = None,
     ) -> FrameHandle:
         """`labels`, one per byte, overrides the default `"MOSI=.. MISO=.."`
         display — lets a stacked protocol (e.g. JEDEC CFI) show what a byte
         *means* (a command opcode, an address byte) without adding a second
         annotation over the same range, which would just paint over this
-        one (same reasoning as `UartTransport.send`'s `labels` param)."""
+        one (same reasoning as `UartTransport.send`'s `labels` param).
+        `datatype` applies to both `mosi` and `miso` when given."""
 
         if self.width != 1:
             raise ValueError("transfer() is for width=1 (classic SPI); use wide_transfer() for QSPI/OctoSPI")
         self._ensure_bound(builder)
-        mosi_bytes = mosi or []
-        miso_bytes = miso if miso is not None else [0] * len(mosi_bytes)
+        mosi_bytes = decode_payload(mosi, datatype) if mosi else []
+        miso_bytes = decode_payload(miso, datatype) if miso is not None else [0] * len(mosi_bytes)
         if len(mosi_bytes) != len(miso_bytes):
             raise ValueError("mosi and miso must be the same length (one shared clock drives both)")
 
