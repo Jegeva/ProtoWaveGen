@@ -8,10 +8,12 @@ class Annotation:
     This is the single flexible mechanism covering every metadata need the
     protocols raise: who's driving a shared line (`track="driver"`), MSB/LSB
     bit order (`track="bitorder"`), a decoded protocol field label
-    (`track="field"`), an error/violation marker (`track="error"`), etc. Output
-    writers group annotations by `track` when deciding how to render or
-    whether to drop them (e.g. the sigrok `.sr` writer drops all annotations —
-    the format has no slot for them).
+    (`track="field"`), a framing-unit boundary (`track="unit"`), or any new
+    track name a protocol needs — nothing beyond `Protocol`/`StackedProtocol`
+    has to change to introduce one. Output writers group annotations by
+    `track` when deciding how to render or whether to drop them (e.g. the
+    sigrok `.sr` writer drops all annotations — the format has no slot for
+    them).
 
     `signals=None` means the annotation applies to the whole capture rather
     than a specific wire (e.g. a global bit-order declaration). `end=None`

@@ -14,6 +14,7 @@ ever produces the data describing where those positions are.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 
@@ -267,6 +268,36 @@ def resolve_single_byte(value: int, datatype: str, tristate: bool = False) -> tu
     if len(payload.values) != 1:
         raise ValueError(f"expected exactly one byte, got {len(payload.values)} from {value!r}")
     return payload.values[0], group_floating_by_byte(payload.floating).get(0, frozenset())
+
+
+def render_as_bin(payload: Payload, prefix_bytes: Sequence[int] = ()) -> str:
+    """Render `prefix_bytes` (fixed, concrete bytes with no floating
+    positions of their own) followed by `payload.values`
+    (`payload.floating`'s positions substituted with their `l`/`h`/`z`
+    marker character) as one flat `bin`-datatype string.
+
+    For a stacked protocol whose payload field gets folded into a larger
+    combined byte list alongside fixed protocol bytes (opcode, address,
+    dummy/CRC-placeholder bytes) before reaching a transport method with
+    one shared `datatype` parameter for the whole list (e.g.
+    `SpiBus.transfer`'s `mosi`/`miso`) — this is the only way to carry the
+    payload field's floating markers through that concatenation, since the
+    combined list must all be the same datatype. `payload.floating`'s
+    byte indices are relative to `payload.values` (index 0 is its own
+    first byte); they're offset by `len(prefix_bytes)` here to land at the
+    right position in the combined list."""
+
+    prefix_len = len(prefix_bytes)
+    floating_by_position = {
+        (prefix_len + span.byte_index, span.bit_index): span.resolution for span in payload.floating
+    }
+    combined = [*prefix_bytes, *payload.values]
+    chars = []
+    for byte_index, byte in enumerate(combined):
+        for bit_index in range(8):
+            resolution = floating_by_position.get((byte_index, bit_index))
+            chars.append(resolution if resolution is not None else str((byte >> (7 - bit_index)) & 1))
+    return "".join(chars)
 
 
 def decode_bits_with_floating(value: str, tristate: bool = False) -> tuple[list[int], frozenset[int]]:

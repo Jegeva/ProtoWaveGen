@@ -28,6 +28,11 @@ class Ds243x(OneWireDevice):
     """
 
     def write_memory(self, builder: CaptureBuilder, *, address: int, data, datatype: str = "bytes") -> FrameHandle:
+        """`data` is decoded fully-concrete (no floating-marker support,
+        unlike `read_memory` below) because the CRC16 covering the
+        scratchpad readback must be computed over real byte values —
+        there's no meaningful "floating" CRC input."""
+
         data = decode_payload(data, datatype)
         addr_lo, addr_hi = address & 0xFF, (address >> 8) & 0xFF
         ending_offset = (len(data) - 1) & 0x1F

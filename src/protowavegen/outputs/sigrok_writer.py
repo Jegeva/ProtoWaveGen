@@ -25,7 +25,7 @@ def _pack_samples(capture: Capture) -> tuple[bytes, int]:
     unitsize = max((n_channels + 7) // 8, 1)
     packed = np.zeros((duration, unitsize), dtype=np.uint8)
     for idx, signal in enumerate(capture.signals):
-        edges = capture.edges.get(signal.name) or ((0, signal.initial_level),)
+        edges = capture.edges_for(signal.name)
         levels = _rasterize(edges, duration)
         byte_idx, bit_idx = divmod(idx, 8)
         packed[:, byte_idx] |= levels << bit_idx

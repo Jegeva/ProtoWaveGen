@@ -53,6 +53,17 @@ class Capture:
     def signal_names(self) -> list[str]:
         return [s.name for s in self.signals]
 
+    def edges_for(self, signal_name: str) -> tuple[tuple[int, int], ...]:
+        """A signal's edge list, falling back to its registered initial
+        level if it has none (registration always seeds one edge, so this
+        is defensive rather than a case that arises in practice)."""
+
+        edges = self.edges.get(signal_name)
+        if edges:
+            return edges
+        initial_level = next(s.initial_level for s in self.signals if s.name == signal_name)
+        return ((0, initial_level),)
+
 
 class CaptureBuilder:
     """Mutable working object protocols write into during `generate()`.

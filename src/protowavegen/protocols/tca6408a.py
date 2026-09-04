@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle
-from .base import StackedProtocol, register_protocol
-from .i2c import I2CBus
+from .base import register_protocol
+from .i2c import I2CBus, I2CDevice
 
 _INPUT_REG = 0x00
 _OUTPUT_REG = 0x01
@@ -11,7 +11,7 @@ _CONFIG_REG = 0x03
 
 
 @register_protocol("tca6408a")
-class Tca6408a(StackedProtocol):
+class Tca6408a(I2CDevice):
     """Texas Instruments TCA6408A 8-bit I2C GPIO expander, stacked on
     `I2CBus`. 7-bit address `0x20-0x27` (3 address-strap pins).
 
@@ -30,8 +30,7 @@ class Tca6408a(StackedProtocol):
     def __init__(
         self, node_id: str, transport: I2CBus, *, address: int = 0x20, operations: list[dict] | None = None
     ):
-        super().__init__(node_id, transport, operations)
-        self.address = address
+        super().__init__(node_id, transport, address=address, operations=operations)
 
     def configure(self, builder: CaptureBuilder, *, mask: int) -> FrameHandle:
         return self.transport.write(

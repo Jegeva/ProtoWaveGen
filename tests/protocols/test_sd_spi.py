@@ -42,3 +42,15 @@ def test_read_block_includes_start_token_and_data():
     assert "0xDE" in labels and "0xAD" in labels and "0xBE" in labels and "0xEF" in labels
     assert labels.count("CRC16") == 2
     assert fh.end == capture.duration_samples
+
+
+def test_read_block_with_floating_marker_annotates_floating_and_resolves_concrete_bits():
+    sd, builder = _setup()
+    sd.read_block(builder, address=0x1000, data="2h", datatype="hex")
+    capture = builder.finish()
+
+    labels = [a.label for a in capture.annotations if a.track == "field"]
+    assert "0x2F '/'" in labels  # 0x2 driven, low nibble floating-high -> 0xF
+
+    floating = [a for a in capture.annotations if a.track == "driver" and a.label == "floating"]
+    assert len(floating) == 1  # coalesced across the 4 floating bits

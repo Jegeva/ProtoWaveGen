@@ -72,13 +72,26 @@ class VCDWriter(OutputWriter):
         def token(ident: str, value: str, kind: str) -> str:
             return f"{value}{ident}" if kind == "bit" else f"s{value} {ident}"
 
+        def clear_first(change: tuple[str, str, str]) -> int:
+            # Two same-track annotations can be adjacent (one's `end` ==
+            # another's `start`) and land in `changes[t]` in whatever order
+            # `capture.annotations` happens to list them, not chronological
+            # order. VCD readers apply last-write-wins per ident within a
+            # timestamp, so an end-clear ("") landing after the next span's
+            # start-value would silently blank a label that should be
+            # showing. Sorting clears first (stable, so bit-edge order and
+            # same-kind order are unaffected) guarantees a real value always
+            # wins over a stale clear at the same timestamp.
+            _, value, kind = change
+            return 0 if kind == "str" and value == "" else 1
+
         # VCD has no "before time 0" — every ident's value AT time 0 is
         # whatever its last change at sample 0 resolves to (a signal may get
         # several edges at sample 0, e.g. its registered idle level
         # immediately overridden by a bit that starts with no pre-delay).
         initial: dict[str, tuple[str, str]] = {sig_ids[name]: ("0", "bit") for name in signal_names}
         initial.update({track_ids[t]: ("", "str") for t in tracks})
-        for ident, value, kind in changes.get(0, []):
+        for ident, value, kind in sorted(changes.get(0, []), key=clear_first):
             initial[ident] = (value, kind)
 
         lines.append("#0")
@@ -91,7 +104,7 @@ class VCDWriter(OutputWriter):
             if t == 0:
                 continue
             lines.append(f"#{t}")
-            for ident, value, kind in changes[t]:
+            for ident, value, kind in sorted(changes[t], key=clear_first):
                 lines.append(token(ident, value, kind))
 
         path.write_text("\n".join(lines) + "\n")

@@ -105,6 +105,7 @@ usage: protowavegen [-h] --config CONFIG [--output-dir OUTPUT_DIR]
                     [--data-hex [TARGET:]HEX] [--data-string [TARGET:]TEXT]
                     [--data-int [TARGET:]INTS] [--data-bin [TARGET:]BIN]
                     [--data-bits [TARGET:]BITS] [--data-file [TARGET:]PATH]
+                    [--data-mask [TARGET:]PATH]
                     [--data-target DATA_TARGET] [--save-settings PATH] [-v]
 ```
 
@@ -117,7 +118,8 @@ usage: protowavegen [-h] --config CONFIG [--output-dir OUTPUT_DIR]
 | `--unit-bits N` | Override the per-protocol SVG framing-unit grouping with a fixed N-bit width. |
 | `--svg-verbose` | Render protocol field descriptions inline on any SVG output. |
 | `--data-hex`, `--data-string`, `--data-int`, `--data-bin`, `--data-bits`, `--data-file` | Override one operation's payload from the command line — see below. Each is repeatable and chainable with the others. |
-| `--data-target TARGET` | Fallback `protocol_id:op_index[:field]` target for any `--data-*` occurrence with no inline target of its own. |
+| `--data-mask [TARGET:]PATH` | Mark byte/bit positions of an already-resolved `"bytes"`-datatype payload as floating, from a companion mask file — see below. Applied after every `--data-*` value flag. |
+| `--data-target TARGET` | Fallback `protocol_id:op_index[:field]` target for any `--data-*`/`--data-mask` occurrence with no inline target of its own. |
 | `--save-settings PATH` | Write the fully resolved config (JSON + every CLI override applied) to `PATH` as JSON — directly reloadable via `--config`. |
 | `-v`, `--verbose` | Print a one-line samplerate/protocol-count/output-count summary. |
 
@@ -193,8 +195,39 @@ useful for a captured firmware image or any binary blob:
 
 The path is resolved relative to the current working directory (same as
 `--config`'s own path). The loaded bytes are stored as `datatype: "bytes"`
-— a raw file has no way to carry floating-bit markers of its own (see
-below).
+— a raw file has no way to carry floating-bit markers of its own.
+
+### `--data-mask`
+
+A `--data-file`-loaded payload (or any other field currently resolved to
+plain `datatype: "bytes"`) has no way to mark any of its bytes as
+floating on its own — `--data-mask` is a companion file that does exactly
+that, applied *after* every `--data-*` value flag has resolved:
+
+```bash
+.venv/bin/python -m protowavegen --config examples/i2c_7bit.json \
+    --data-file i2c0:0:data:./firmware_fragment.bin \
+    --data-mask i2c0:0:data:./firmware_fragment.mask
+```
+
+The mask file is plain text, comma- or newline-separated entries, each
+either `byte_index:resolution` (the whole byte, all 8 bits) or
+`byte_index.bit_index:resolution` (one bit, `0`=MSB, same convention the
+floating-marker alphabet uses everywhere else), `resolution` one of
+`l`/`h`/`z`:
+
+```
+3:h,7:l,10.3:z
+```
+
+marks byte 3 fully floating-high, byte 7 fully floating-low, and just bit
+3 of byte 10 floating-on-protocol-pull. The target's current datatype
+must be `"bytes"` — a mask only applies to a concrete byte list, and
+converts it to `datatype: "bin"` under the hood (the same channel a
+hand-typed `--data-bin` marker already uses), so `z` resolves the same
+way it would anywhere else: silently on a TRISTATE signal (I2C SDA/SCL,
+1-Wire DQ, ...), a hard error otherwise. Two `--data-mask` flags
+targeting the same field raise a conflict error, same as `--data-*`.
 
 ### `--save-settings`
 
@@ -229,10 +262,16 @@ The marker only affects which label ends up on the SVG's `"driver"`
 annotation track (rendered as `"floating"`, its own color in the legend) —
 the resolved *value* is always baked in as a concrete bit, so checksums,
 `format_byte()` display, and everything else downstream sees a completely
-normal byte. **Floating markers currently only work on direct transport
-operations (I2C/1-Wire/SPI/CAN/Wiegand/PS2/Microwire's own methods) — a
-stacked device's operations (`lm75.read_temperature`, `jedec_cfi.read`,
-...) don't yet render them, even where they accept a `datatype`.**
+normal byte. Floating markers work on every direct transport operation
+(I2C/1-Wire/SPI/CAN/Wiegand/PS2/Microwire/UART's own methods) and on any
+stacked device's operation whose payload field reaches its transport
+unmixed with other bytes — confirmed for `ds243x.read_memory`,
+`jedec_cfi.read`, `sd_spi.read_block`, and `eeprom_24xx.read_sequential`.
+**The gap is a stacked protocol whose payload bytes get folded *into* a
+checksum alongside other bytes before transmission (LIN,
+`ds243x.write_memory`)** — there, a floating placeholder can't survive the
+checksum computation, so those operations still require fully concrete
+bytes.
 
 The alphabet works at three different granularities, same characters
 everywhere:
@@ -257,6 +296,12 @@ TRISTATE and `z` resolves automatically):
 .venv/bin/python -m protowavegen --config examples/i2c_7bit.json \
     --data-string "i2c0:1:data:\xzztoto"
 ```
+
+A marker also works directly in the JSON config itself, no CLI override
+needed — see `examples/i2c_7bit_floating.json`, whose `read` operation
+sets `"data": "2hzz"` with `"datatype": "hex"` (byte 0 is `0x2` driven with
+its low nibble floating high; byte 1 is fully floating, resolving via
+SDA's pull-up).
 
 ## Output formats
 

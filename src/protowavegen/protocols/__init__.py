@@ -5,6 +5,7 @@ from .base import (
     TransportProtocol,
     get_protocol_class,
     register_protocol,
+    registered_protocols,
 )
 
 # Importing each module registers its @register_protocol-decorated class.
@@ -21,4 +22,5 @@ __all__ = [
     "DriverTracker",
     "register_protocol",
     "get_protocol_class",
+    "registered_protocols",
 ]

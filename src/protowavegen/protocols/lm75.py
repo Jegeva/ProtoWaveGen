@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle
-from .base import StackedProtocol, register_protocol
-from .i2c import I2CBus
+from .base import register_protocol
+from .i2c import I2CBus, I2CDevice
 
 _TEMP_REG = 0x00
 _CONFIG_REG = 0x01
@@ -11,7 +11,7 @@ _TOS_REG = 0x03
 
 
 @register_protocol("lm75")
-class Lm75(StackedProtocol):
+class Lm75(I2CDevice):
     """National LM75 (and register-compatible clones) temperature sensor,
     stacked on `I2CBus` (`transport`). 7-bit address 0x48-0x4F (3
     address-strap pins).
@@ -32,8 +32,7 @@ class Lm75(StackedProtocol):
     def __init__(
         self, node_id: str, transport: I2CBus, *, address: int = 0x48, operations: list[dict] | None = None
     ):
-        super().__init__(node_id, transport, operations)
-        self.address = address
+        super().__init__(node_id, transport, address=address, operations=operations)
         self._pointer: int | None = None
 
     @staticmethod

@@ -134,6 +134,34 @@ classes); if it doesn't decode cleanly, read the decoder's own source
 before concluding it's unfixable — two of the "limitations" above turned
 out to be real bugs on our side once actually investigated, not sigrok's.
 
+### Other lessons worth knowing
+
+- **The Python API and the CLI/JSON surface can silently drift apart.** A
+  protocol operation method can grow full `datatype`/floating-marker
+  support in its Python signature while `config.py`'s hand-maintained
+  `_PAYLOAD_FIELDS` set (which the CLI's `--data-target`/auto-detect walks
+  to find payload fields) never gets told about the new field — nothing
+  raises at definition time, it just silently can't be reached from the
+  CLI until someone happens to try it. This has happened three separate
+  times (DALI's per-field `datatype` kwarg naming, a missing `--data-bits`
+  flag, `seven_segment.set_digits`'s `patterns` field). `tests/
+  test_payload_field_coverage.py` guards against recurrence: it walks
+  every registered protocol's operation methods via `inspect.signature`
+  and asserts every unambiguous datatype-controlled parameter is in
+  `_PAYLOAD_FIELDS` — keep it green rather than special-casing around it
+  when adding a new payload field.
+- **`vcd_writer.py`'s per-timestamp annotation ordering matters.** Two
+  same-track annotations that are adjacent (one's `end` == another's
+  `start`) get their value-change events bucketed by sample time, but
+  VCD applies last-write-wins *within* a timestamp based on emission
+  order, not chronological order — if `capture.annotations` happens to
+  list the later span before the earlier one, an end-clear can land after
+  the next span's start-value and silently blank a label that should be
+  showing. Fixed by sorting each bucket so clears sort before real values
+  before emitting (see the `clear_first` sort key). Any future change to
+  how `changes[t]` is built or emitted needs to preserve that ordering
+  guarantee, not just get the *set* of events right.
+
 ## Architecture
 
 Everything flows through one pipeline, orchestrated by

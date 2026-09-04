@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle
-from .base import StackedProtocol, register_protocol
+from .base import register_protocol
 from .checksums import pec8_smbus
-from .i2c import I2CBus
+from .i2c import I2CBus, I2CDevice
 
 _AMBIENT_REG = 0x06
 _OBJECT_REGS = {1: 0x07, 2: 0x08}
 
 
 @register_protocol("mlx90614")
-class Mlx90614(StackedProtocol):
+class Mlx90614(I2CDevice):
     """Melexis MLX90614 infrared thermometer, stacked on `I2CBus`. Factory
     default 7-bit address `0x5A` (field-reprogrammable via an EEPROM
     register — that reprogramming procedure isn't modeled).
@@ -29,8 +29,7 @@ class Mlx90614(StackedProtocol):
     def __init__(
         self, node_id: str, transport: I2CBus, *, address: int = 0x5A, operations: list[dict] | None = None
     ):
-        super().__init__(node_id, transport, operations)
-        self.address = address
+        super().__init__(node_id, transport, address=address, operations=operations)
 
     @staticmethod
     def _encode_temp(celsius: float) -> tuple[int, int]:

@@ -52,3 +52,25 @@ def test_include_annotations_emits_string_track(tmp_path):
     text = path.read_text()
     assert "$var string 1" in text
     assert "shello" in text
+
+
+def test_adjacent_same_track_annotations_out_of_order_dont_blank_the_later_label(tmp_path):
+    """Regression: two same-track annotations where one's end == the other's
+    start, appended out of chronological order, must not let the earlier
+    span's end-clear land after the later span's start-value at their shared
+    timestamp (VCD is last-write-wins per ident within a timestamp)."""
+
+    b = CaptureBuilder(samplerate=1000)
+    b.register_signal(Signal("a"))
+    b.advance(20)
+    b.annotate("field", "B_label", start=10, end=20)  # appended before A despite starting later
+    b.annotate("field", "A_label", start=0, end=10)
+    capture = b.finish()
+
+    path = tmp_path / "out.vcd"
+    VCDWriter().write(capture, path, include_annotations=True)
+    text = path.read_text()
+
+    block_10 = text.split("#10")[1].split("#20")[0]
+    assert "sB_label" in block_10
+    assert block_10.rstrip().splitlines()[-1].startswith("sB_label ")

@@ -3,6 +3,7 @@ from __future__ import annotations
 from ..model import CaptureBuilder, FrameHandle, Signal, SignalKind
 from .base import (
     DriverTracker,
+    StackedProtocol,
     TransportProtocol,
     bind_clock_samples,
     bits_of_byte,
@@ -242,7 +243,7 @@ class I2CBus(TransportProtocol):
 
     def write_then_read(
         self, builder: CaptureBuilder, *, address: int, write_data, read_data,
-        datatype: str = "bytes",
+        datatype: str = "bytes", write_data_datatype: str | None = None, read_data_datatype: str | None = None,
         nack_last: bool = True, write_labels: list[str] | None = None, read_labels: list[str] | None = None,
     ) -> FrameHandle:
         """The common "set a register pointer, then read it back" idiom:
@@ -252,10 +253,17 @@ class I2CBus(TransportProtocol):
         (LM75-style pointer registers, EEPROM random reads, burst reads)
         actually do this rather than a plain STOP-separated pair.
         `write_labels`/`read_labels` work like `write()`'s `labels`.
-        `datatype` applies to both `write_data` and `read_data`."""
+        `datatype` applies to both `write_data` and `read_data` by default;
+        `write_data_datatype`/`read_data_datatype` (named after their field,
+        matching DALI/Wiegand's own per-field datatype convention)
+        independently override it for just one side (e.g. a caller whose
+        `write_data` is always a concrete register-pointer address but
+        whose `read_data` should carry a floating marker)."""
 
-        write_payload = decode_payload_with_floating(write_data, datatype, tristate=True)
-        read_payload = decode_payload_with_floating(read_data, datatype, tristate=True)
+        write_payload = decode_payload_with_floating(
+            write_data, write_data_datatype or datatype, tristate=True
+        )
+        read_payload = decode_payload_with_floating(read_data, read_data_datatype or datatype, tristate=True)
         write_data = write_payload.values
         read_data = read_payload.values
         write_floating_by_byte = group_floating_by_byte(write_payload.floating)
@@ -319,3 +327,20 @@ class I2CBus(TransportProtocol):
         self._sda_driver.close()
         builder.annotate("bitorder", "msb", start=fh.start, end=fh.end, signals=(self.sig("sda"),))
         return fh
+
+
+class I2CDevice(StackedProtocol):
+    """Shared `__init__` for devices stacked on `I2CBus` that address
+    themselves by a fixed 7-bit `address` (TCA6408A, LM75, MLX90614,
+    ADXL345, the 24xx EEPROM family, ...): just `self.address`, on top of
+    `StackedProtocol`'s own `transport`/`operations` — the I2C equivalent
+    of `OneWireDevice`'s `rom_id` for 1-Wire devices. Devices with no
+    configurable address of their own (a single fixed-address part whose
+    `self.address` nothing ever reads back, e.g. DS1307/Nunchuk) don't
+    need this and stay plain `StackedProtocol` subclasses instead."""
+
+    def __init__(
+        self, node_id: str, transport: I2CBus, *, address: int, operations: list[dict] | None = None,
+    ):
+        super().__init__(node_id, transport, operations)
+        self.address = address

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle
 from .base import StackedProtocol, format_byte, register_protocol
-from .payload import decode_payload
+from .payload import Payload, decode_payload_with_floating, render_as_bin
 from .checksums import crc7_sd
 from .spi import SpiBus
 
@@ -54,11 +54,24 @@ class SdCardSpi(StackedProtocol):
     def read_block(self, builder: CaptureBuilder, *, address: int, data, datatype: str = "bytes") -> FrameHandle:
         """`data` is the synthesized block contents (512 bytes for a real
         card, any length here) — this tool generates rather than senses
-        real flash contents."""
+        real flash contents.
 
-        data = decode_payload(data, datatype)
+        `data` supports floating markers (`decode_payload_with_floating`).
+        Since it's the MISO payload folded in after a fixed 1-byte start
+        token and before a fixed 2-byte CRC16 placeholder, and
+        `SpiBus.transfer()` decodes MOSI/MISO each under one shared
+        `datatype`, both get rendered into flat `bin`-datatype strings
+        (MOSI has no floating positions of its own) and passed with
+        `datatype="bin"` — resolution happens downstream in `transfer()`,
+        same as any other floating-marker payload."""
+
+        payload = decode_payload_with_floating(data, datatype, tristate=False)
+        data = payload.values
         self._send_command(builder, cmd=17, arg=address, response=[0x00], response_label="R1=OK")
-        mosi = [0xFF] * (1 + len(data) + 2)
-        miso = [_DATA_START_TOKEN, *data, 0x00, 0x00]  # CRC16 placeholder, not computed
+        mosi_bytes = [0xFF] * (1 + len(data) + 2)
         labels = ["TOKEN=0xFE", *(format_byte(b) for b in data), "CRC16", "CRC16"]
-        return self.transport.transfer(builder, mosi=mosi, miso=miso, labels=labels)
+        mosi = render_as_bin(Payload(values=mosi_bytes))
+        miso = render_as_bin(payload, prefix_bytes=[_DATA_START_TOKEN]) + "".join(
+            f"{b:08b}" for b in (0x00, 0x00)  # CRC16 placeholder, not computed, no floating relevance
+        )
+        return self.transport.transfer(builder, mosi=mosi, miso=miso, datatype="bin", labels=labels)

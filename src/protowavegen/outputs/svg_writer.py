@@ -10,7 +10,6 @@ from .base import OutputWriter, register_output
 _TRACK_COLORS = {
     "field": "#dd6b20",
     "bitorder": "#6b46c1",
-    "error": "#c53030",
 }
 _DEFAULT_TRACK_COLOR = "#4a5568"
 _SIGNAL_COLOR = "#1a202c"
@@ -72,40 +71,9 @@ class SVGWriter(OutputWriter):
         def x(sample: int) -> float:
             return label_width + sample * pixels_per_sample
 
-        all_tracks = sorted({a.track for a in capture.annotations})
-        unit_bands = sorted(
-            (a.start, a.end if a.end is not None else duration)
-            for a in capture.annotations
-            if a.track == "unit"
+        static_notes, rendered_tracks, legend_colors, unit_bands = self._prepare_tracks_and_legend(
+            capture, duration, x, verbose
         )
-        driver_present = any(a.track == "driver" for a in capture.annotations)
-        lane_candidates = [t for t in all_tracks if t not in ("unit", "driver")]
-
-        static_notes = []
-        rendered_tracks = []
-        for track in lane_candidates:
-            track_annotations = [a for a in capture.annotations if a.track == track]
-            constant_label = self._constant_value(track_annotations, duration)
-            if constant_label is not None:
-                static_notes.append(f"{track}: {constant_label}")
-            else:
-                rendered_tracks.append(track)
-
-        legend_labels = set()
-        if driver_present:
-            legend_labels.update(a.label for a in capture.annotations if a.track == "driver")
-        for track in rendered_tracks:
-            for a in capture.annotations:
-                if a.track != track:
-                    continue
-                end = a.end if a.end is not None else duration
-                rect_w = x(end) - x(a.start)
-                _, legend_label = self._display_for_annotation(a, rect_w, verbose)
-                if legend_label is not None:
-                    legend_labels.add(legend_label)
-        legend_colors = {
-            label: _LABEL_PALETTE[i % len(_LABEL_PALETTE)] for i, label in enumerate(sorted(legend_labels))
-        }
 
         n_signals = len(capture.signals)
         static_note_height = 16 if static_notes else 0
@@ -151,7 +119,7 @@ class SVGWriter(OutputWriter):
                     font_size="12px", font_family="monospace",
                 )
             )
-            edges = capture.edges.get(signal.name) or ((0, signal.initial_level),)
+            edges = capture.edges_for(signal.name)
             spans = self._driver_spans(capture, signal.name, duration)
             self._draw_waveform(dwg, edges, spans, legend_colors, duration, x, y_high, y_low)
 
@@ -207,6 +175,53 @@ class SVGWriter(OutputWriter):
 
         dwg.save()
 
+    def _prepare_tracks_and_legend(
+        self, capture: Capture, duration: int, x, verbose: bool
+    ) -> tuple[list[str], list[str], dict[str, str], list[tuple[int, int]]]:
+        """Pure classification pass, no drawing: which tracks collapse into
+        a one-line static note vs. get a real lane, which labels need a
+        legend color (driver spans, plus any annotation whose text
+        overflows its slot), and the `unit`-track background bands.
+        Returns `(static_notes, rendered_tracks, legend_colors,
+        unit_bands)`."""
+
+        all_tracks = sorted({a.track for a in capture.annotations})
+        unit_bands = sorted(
+            (a.start, a.end if a.end is not None else duration)
+            for a in capture.annotations
+            if a.track == "unit"
+        )
+        driver_present = any(a.track == "driver" for a in capture.annotations)
+        lane_candidates = [t for t in all_tracks if t not in ("unit", "driver")]
+
+        static_notes = []
+        rendered_tracks = []
+        for track in lane_candidates:
+            track_annotations = [a for a in capture.annotations if a.track == track]
+            constant_label = self._constant_value(track_annotations, duration)
+            if constant_label is not None:
+                static_notes.append(f"{track}: {constant_label}")
+            else:
+                rendered_tracks.append(track)
+
+        legend_labels = set()
+        if driver_present:
+            legend_labels.update(a.label for a in capture.annotations if a.track == "driver")
+        for track in rendered_tracks:
+            for a in capture.annotations:
+                if a.track != track:
+                    continue
+                end = a.end if a.end is not None else duration
+                rect_w = x(end) - x(a.start)
+                _, legend_label = self._display_for_annotation(a, rect_w, verbose)
+                if legend_label is not None:
+                    legend_labels.add(legend_label)
+        legend_colors = {
+            label: _LABEL_PALETTE[i % len(_LABEL_PALETTE)] for i, label in enumerate(sorted(legend_labels))
+        }
+
+        return static_notes, rendered_tracks, legend_colors, unit_bands
+
     @staticmethod
     def _constant_value(annotations: list[Annotation], duration: int) -> str | None:
         """If every annotation on a track shares one label and together they
@@ -257,7 +272,7 @@ class SVGWriter(OutputWriter):
         spans = [
             (a.start, a.end if a.end is not None else duration, a.label)
             for a in capture.annotations
-            if a.track == "driver" and a.signals is not None and signal_name in a.signals
+            if a.track == "driver" and a.signals is not None and a.applies_to(signal_name)
         ]
         spans.sort()
         return spans

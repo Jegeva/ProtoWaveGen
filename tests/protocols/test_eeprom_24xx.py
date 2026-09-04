@@ -60,3 +60,17 @@ def test_address_out_of_range_rejected():
     ee, builder = _setup(addr_width=1)
     with pytest.raises(ValueError):
         ee.write_byte(builder, word_addr=0x100, value=0)
+
+
+def test_read_sequential_with_floating_marker_annotates_floating_and_resolves_concrete_bits():
+    ee, builder = _setup()
+    ee.read_sequential(builder, word_addr=0x20, values="2h", datatype="hex")
+    capture = builder.finish()
+
+    fields = [a for a in capture.annotations if a.track == "field"]
+    labels = [f.label for f in fields]
+    assert "0x2F '/'" in labels  # 0x2 driven, low nibble floating-high -> 0xF
+    assert "ADDR=0x20" in labels  # word address stays concrete despite read_datatype="hex"
+
+    floating = [a for a in capture.annotations if a.track == "driver" and a.label == "floating"]
+    assert len(floating) == 1  # coalesced across the 4 floating bits

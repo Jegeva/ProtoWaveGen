@@ -2,9 +2,11 @@ import pytest
 
 from protowavegen.protocols.payload import (
     FloatingSpan,
+    Payload,
     decode_payload,
     decode_payload_with_floating,
     group_floating_by_byte,
+    render_as_bin,
 )
 
 
@@ -158,3 +160,28 @@ def test_decode_payload_text_lone_backslash_passes_through_literally():
     # a backslash not followed by 'x' is just a literal character, same as
     # today's plain UTF-8 encoding for any text without escapes.
     assert decode_payload("a\\b", "text") == list("a\\b".encode("utf-8"))
+
+
+def test_render_as_bin_no_prefix_no_floating():
+    payload = Payload(values=[0x41])
+    assert render_as_bin(payload) == "01000001"
+
+
+def test_render_as_bin_with_prefix_bytes():
+    payload = Payload(values=[0xFF])
+    assert render_as_bin(payload, prefix_bytes=[0x00, 0x01]) == "00000000" + "00000001" + "11111111"
+
+
+def test_render_as_bin_substitutes_floating_positions_offset_by_prefix():
+    payload = Payload(
+        values=[0x2F],
+        floating=(
+            FloatingSpan(byte_index=0, bit_index=4, resolution="h"),
+            FloatingSpan(byte_index=0, bit_index=5, resolution="h"),
+            FloatingSpan(byte_index=0, bit_index=6, resolution="h"),
+            FloatingSpan(byte_index=0, bit_index=7, resolution="h"),
+        ),
+    )
+    # one fixed prefix byte (0xAA) shifts the payload's own byte_index=0 to
+    # combined byte_index=1
+    assert render_as_bin(payload, prefix_bytes=[0xAA]) == "10101010" + "0010hhhh"

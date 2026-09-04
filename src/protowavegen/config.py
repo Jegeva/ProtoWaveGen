@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .protocols import get_protocol_class
+from .protocols.payload import FloatingSpan, Payload, render_as_bin
 
 _FORMAT_EXTENSIONS = {"svg": "svg", "sigrok": "sr", "vcd": "vcd"}
 _PAYLOAD_FIELDS = {
@@ -90,13 +91,14 @@ def _split_inline_target(raw: str) -> tuple[str | None, str]:
 
 def _datatype_kwarg_name(cls: type, op_name: str, field: str) -> str:
     """Which kwarg name this operation method actually uses to select
-    `field`'s datatype: the shared `"datatype"` every protocol but DALI
-    uses, or DALI's own `f"{field}_datatype"` (it has multiple
+    `field`'s datatype: the shared `"datatype"` most protocols use, or a
+    per-field `f"{field}_datatype"` (DALI's `send_forward_frame`, Wiegand's
+    `send_card_26bit`, I2C's `write_then_read` — all have multiple
     independently-typed byte fields on one operation, so each needs its
-    own datatype selector — see `DaliBus.send_forward_frame`). Resolved
-    from the method's real signature rather than a hardcoded protocol-name
-    check, so this doesn't need updating if another protocol adopts the
-    same per-field convention later."""
+    own datatype selector). Resolved from the method's real signature
+    rather than a hardcoded protocol-name check, so this doesn't need
+    updating if another protocol adopts the same per-field convention
+    later."""
 
     method = getattr(cls, op_name, None)
     if method is None:
@@ -232,29 +234,25 @@ def _apply_data_mask(values: list[int], mask_entries: list[tuple[int, int | None
     """Render `values` (a plain byte list) as a flat `bin`-datatype string,
     substituting each mask entry's l/h/z character for the bits it covers
     and the real 0/1 digit everywhere else — resolution happens later,
-    downstream, the same way a hand-typed `--data-bin` marker would."""
+    downstream, the same way a hand-typed `--data-bin` marker would. Built
+    on `render_as_bin` (`protocols/payload.py`), the same byte-list-plus-
+    floating-positions-to-flat-bin-string logic a stacked protocol uses to
+    fold a floating-marked payload field into a larger combined byte list."""
 
-    overrides: dict[tuple[int, int], str] = {}
+    floating: list[FloatingSpan] = []
     for byte_index, bit_index, resolution in mask_entries:
         if not (0 <= byte_index < len(values)):
             raise ValueError(
                 f"--data-mask: byte index {byte_index} out of range (payload has {len(values)} byte(s))"
             )
         if bit_index is None:
-            for b in range(8):
-                overrides[(byte_index, b)] = resolution
+            floating.extend(
+                FloatingSpan(byte_index=byte_index, bit_index=b, resolution=resolution) for b in range(8)
+            )
         else:
-            overrides[(byte_index, bit_index)] = resolution
+            floating.append(FloatingSpan(byte_index=byte_index, bit_index=bit_index, resolution=resolution))
 
-    chars = []
-    for byte_index, byte in enumerate(values):
-        for bit_index in range(8):
-            resolution = overrides.get((byte_index, bit_index))
-            if resolution is not None:
-                chars.append(resolution)
-            else:
-                chars.append(str((byte >> (7 - bit_index)) & 1))
-    return "".join(chars)
+    return render_as_bin(Payload(values=values, floating=tuple(floating)))
 
 
 def apply_data_mask(protocols: list[dict], args) -> list[dict]:
@@ -269,11 +267,21 @@ def apply_data_mask(protocols: list[dict], args) -> list[dict]:
         return protocols
 
     protocols = list(protocols)
+    touched: dict[tuple[int, int, str], str] = {}
 
     for raw_mask in masks:
         inline_target, path = _split_inline_target(raw_mask)
         target = inline_target if inline_target is not None else args.data_target
         p_idx, op_idx, field = _resolve_data_target(protocols, target)
+
+        key = (p_idx, op_idx, field)
+        this_mask = f"--data-mask {raw_mask!r}"
+        if key in touched:
+            raise ValueError(
+                f"conflicting --data-mask overrides target the same field "
+                f"{protocols[p_idx]['id']}:{op_idx}:{field}: {touched[key]} and {this_mask}"
+            )
+        touched[key] = this_mask
 
         spec = dict(protocols[p_idx])
         operations = list(spec["operations"])
@@ -381,7 +389,11 @@ def resolve_config(json_cfg: dict, args) -> Config:
     all-or-nothing override, since format selection and per-format options
     can't both come from a flat CLI flag); with no `--format`, `--output-dir`
     alone just relocates the JSON-declared outputs into that directory.
-    `--format` with no `--output-dir` defaults to `./output`.
+    `--format` with no `--output-dir` defaults to `./output`. Payload data
+    resolves in two passes: `apply_data_override` applies every
+    `--data-*` value flag first, then `apply_data_mask` applies every
+    `--data-mask` on top — a mask requires its target to have already
+    resolved to datatype `"bytes"`.
     """
 
     samplerate = args.samplerate if args.samplerate is not None else json_cfg.get("samplerate")

@@ -45,6 +45,22 @@ def test_read_flash_command_labels_address_and_data():
     ]
 
 
+def test_read_flash_command_with_floating_marker_annotates_floating_and_resolves_concrete_bits():
+    spi = _spi()
+    cfi = JedecCfi("cfi0", spi)
+    builder = CaptureBuilder(samplerate=10_000_000)
+    spi.register_signals(builder)
+    cfi.read(builder, address=0x001234, data="2h", datatype="hex")
+    capture = builder.finish()
+
+    fields = [a for a in capture.annotations if a.track == "field"]
+    assert fields[-1].label == "0x2F '/'"  # 0x2 driven, low nibble floating-high -> 0xF
+    assert fields[-1].data["miso"] == 0x2F
+
+    floating = [a for a in capture.annotations if a.track == "driver" and a.label == "floating"]
+    assert len(floating) == 1  # coalesced across the 4 floating bits
+
+
 def test_address_out_of_range_rejected():
     spi = _spi()
     cfi = JedecCfi("cfi0", spi)

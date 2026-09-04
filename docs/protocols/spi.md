@@ -85,7 +85,10 @@ list.
 reads.
 
 Operations: `read_jedec_id(manufacturer_id, memory_type, capacity)` (no
-`datatype`), `read(address, data, datatype="bytes")` (plain-decode only).
+`datatype`), `read(address, data, datatype="bytes")` — full floating-marker
+support on `data` (it's the MISO payload, folded in after the fixed
+opcode/address bytes and rendered to `bin` under the hood so it can carry
+`l`/`h`/`z` markers through that concatenation).
 
 ```json
 {
@@ -150,8 +153,10 @@ takes `datatype`.
 gets a real CRC-7 (`checksums.crc7_sd`).
 
 Operations: `init()` (no `datatype`), `read_block(address, data, datatype="bytes")`
-(plain-decode). This is the one example in the repo already demonstrating
-the `"hex"` datatype.
+— full floating-marker support on `data` (same technique as JEDEC CFI's
+`read`: it's the MISO payload folded in between a fixed start token and a
+fixed CRC16 placeholder). This is the one example in the repo already
+demonstrating the `"hex"` datatype.
 
 ```json
 {

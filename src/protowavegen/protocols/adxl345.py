@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle
-from .base import StackedProtocol, register_protocol
-from .i2c import I2CBus
+from .base import register_protocol
+from .i2c import I2CBus, I2CDevice
 
 _POWER_CTL_REG = 0x2D
 _DATA_FORMAT_REG = 0x31
@@ -10,7 +10,7 @@ _DATAX0_REG = 0x32
 
 
 @register_protocol("adxl345")
-class Adxl345(StackedProtocol):
+class Adxl345(I2CDevice):
     """Analog Devices ADXL345 3-axis accelerometer, I2C mode, stacked on
     `I2CBus`. 7-bit address `0x1D` (or `0x53` with `SDO` grounded).
 
@@ -23,8 +23,7 @@ class Adxl345(StackedProtocol):
     def __init__(
         self, node_id: str, transport: I2CBus, *, address: int = 0x1D, operations: list[dict] | None = None
     ):
-        super().__init__(node_id, transport, operations)
-        self.address = address
+        super().__init__(node_id, transport, address=address, operations=operations)
 
     def enable_measurement(self, builder: CaptureBuilder) -> FrameHandle:
         return self.transport.write(

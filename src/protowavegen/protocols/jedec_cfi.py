@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle
 from .base import StackedProtocol, format_byte, register_protocol
-from .payload import decode_payload
+from .payload import Payload, decode_payload_with_floating, render_as_bin
 from .spi import SpiBus
 
 _JEDEC_ID_OPCODE = 0x9F
@@ -46,15 +46,24 @@ class JedecCfi(StackedProtocol):
     def read(self, builder: CaptureBuilder, *, address: int, data, datatype: str = "bytes") -> FrameHandle:
         """Standard SPI-NOR READ (0x03): opcode + 3-byte address, then the
         flash shifts back `len(data)` bytes (synthesized, since this tool
-        generates rather than senses real flash contents)."""
+        generates rather than senses real flash contents).
 
-        data = decode_payload(data, datatype)
+        `data` supports floating markers (`decode_payload_with_floating`).
+        Since it's the MISO payload folded in after 4 fixed prefix bytes
+        (opcode + 3-byte address) and `SpiBus.transfer()` decodes MOSI/MISO
+        each under one shared `datatype`, both get rendered into flat
+        `bin`-datatype strings via `render_as_bin` (MOSI has no floating
+        positions of its own, so it renders as plain concrete digits) and
+        passed with `datatype="bin"` — resolution happens downstream in
+        `transfer()`, same as any other floating-marker payload."""
+
+        payload = decode_payload_with_floating(data, datatype, tristate=False)
+        data = payload.values
         if not (0 <= address < (1 << 24)):
             raise ValueError(f"address {address} does not fit in 3 bytes")
         addr_bytes = [(address >> 16) & 0xFF, (address >> 8) & 0xFF, address & 0xFF]
 
-        mosi = [_READ_OPCODE, *addr_bytes, *([0x00] * len(data))]
-        miso = [0x00, 0x00, 0x00, 0x00, *data]
+        mosi_bytes = [_READ_OPCODE, *addr_bytes, *([0x00] * len(data))]
         labels = [
             f"CMD=0x{_READ_OPCODE:02X}",
             f"ADDR[23:16]={format_byte(addr_bytes[0])}",
@@ -62,4 +71,6 @@ class JedecCfi(StackedProtocol):
             f"ADDR[7:0]={format_byte(addr_bytes[2])}",
             *(format_byte(byte) for byte in data),
         ]
-        return self.transport.transfer(builder, mosi=mosi, miso=miso, labels=labels)
+        mosi = render_as_bin(Payload(values=mosi_bytes))
+        miso = render_as_bin(payload, prefix_bytes=[0x00, 0x00, 0x00, 0x00])
+        return self.transport.transfer(builder, mosi=mosi, miso=miso, datatype="bin", labels=labels)

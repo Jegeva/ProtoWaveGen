@@ -36,9 +36,18 @@ def get_protocol_class(name: str) -> type["Protocol"]:
     try:
         return _REGISTRY[name]
     except KeyError:
-        raise KeyError(
+        raise ValueError(
             f"unknown protocol type {name!r}; available: {sorted(_REGISTRY)}"
         ) from None
+
+
+def registered_protocols() -> dict[str, type["Protocol"]]:
+    """Every currently-registered `{name: class}` pair — a snapshot copy,
+    for callers (e.g. a coverage test walking every protocol's operation
+    methods) that need to enumerate the whole registry rather than look up
+    one known name via `get_protocol_class`."""
+
+    return dict(_REGISTRY)
 
 
 def format_byte(byte: int) -> str:

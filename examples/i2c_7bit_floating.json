@@ -1,0 +1,19 @@
+{
+  "samplerate": 4000000,
+  "protocols": [
+    {
+      "id": "i2c0",
+      "type": "i2c",
+      "params": { "clock_hz": 100000, "addr_bits": 7 },
+      "operations": [
+        { "op": "write", "address": 72, "data": [1, 42] },
+        { "op": "read", "address": 72, "data": "2hzz", "datatype": "hex" }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/i2c_7bit_floating.svg" },
+    { "type": "sigrok", "path": "output/i2c_7bit_floating.sr" },
+    { "type": "vcd", "path": "output/i2c_7bit_floating.vcd" }
+  ]
+}

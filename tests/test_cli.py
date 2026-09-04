@@ -596,6 +596,26 @@ def test_data_mask_applied_on_top_of_data_file(tmp_path):
     assert op["data"] == "hhhhhhhh"
 
 
+def test_data_mask_conflicting_same_target_raises(tmp_path):
+    from protowavegen.config import resolve_config
+    from protowavegen.main import build_arg_parser
+
+    mask_a = tmp_path / "mask_a.txt"
+    mask_a.write_text("0:h")
+    mask_b = tmp_path / "mask_b.txt"
+    mask_b.write_text("0:l")
+
+    args = build_arg_parser().parse_args(
+        [
+            "--config", "unused.json",
+            "--data-mask", f"uart0:0:data:{mask_a}",
+            "--data-mask", f"uart0:0:data:{mask_b}",
+        ]
+    )
+    with pytest.raises(ValueError, match="conflicting --data-mask"):
+        resolve_config(_uart_config(), args)
+
+
 def test_data_mask_byte_index_out_of_range_raises_clear_error(tmp_path):
     from protowavegen.config import resolve_config
     from protowavegen.main import build_arg_parser

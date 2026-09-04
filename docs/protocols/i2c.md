@@ -28,8 +28,11 @@ resolve automatically.
   `labels=None`. `data` is the synthesized response the slave sends back
   (this tool generates diagrams, it doesn't sense a real device).
 - **`write_then_read`** — `address`, `write_data`, `read_data`,
-  `datatype="bytes"` (applies to both fields independently),
-  `nack_last=True`, `write_labels=None`, `read_labels=None`. The common
+  `datatype="bytes"` (applies to both fields by default),
+  `write_data_datatype=None`/`read_data_datatype=None` (override `datatype`
+  independently for just one field — e.g. a concrete register-pointer
+  `write_data` alongside a floating-marked `read_data`), `nack_last=True`,
+  `write_labels=None`, `read_labels=None`. The common
   "set a register pointer, then read it back" idiom, as one continuous
   frame (write phase, repeated START, read phase) instead of two separate
   transactions.
@@ -128,8 +131,9 @@ picks byte- vs. word-addressing.
 
 Operations: `write_page(word_addr, values)` (plain list, no `datatype`),
 `write_byte(word_addr, value)`, `read_sequential(word_addr, values, datatype="bytes")`
-(plain-decode only — `"bin"` and floating markers not yet supported here),
-`read_byte(word_addr, value)`.
+— full floating-marker support on `values` (forwarded straight to
+`I2CBus.write_then_read()`'s `read_data`, unmixed with the word-address
+bytes), `read_byte(word_addr, value)`.
 
 ```json
 {
