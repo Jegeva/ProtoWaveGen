@@ -84,3 +84,39 @@ def test_facility_code_out_of_range_rejected():
     wg, builder = _setup()
     with pytest.raises(ValueError):
         wg.send_card_26bit(builder, facility_code=256, card_number=0)
+
+
+def test_send_card_26bit_bits_datatype_with_floating_marker():
+    wg, builder = _setup()
+    # "0000110z" -> facility_code 0b0000110(z=1) = 13, matches plain int 13
+    fh = wg.send_card_26bit(
+        builder, facility_code="0000110z", facility_code_datatype="bits", card_number=34567,
+    )
+    capture = builder.finish()
+
+    field = [a for a in capture.annotations if a.track == "field"][0]
+    assert field.label == "FC=13 CARD=34567"
+    assert field.data["facility_code"] == 13 and field.data["card_number"] == 34567
+
+    floating = [a for a in capture.annotations if a.track == "driver" and a.label == "floating"]
+    assert len(floating) == 1
+    assert fh is not None
+
+
+def test_send_card_26bit_bits_datatype_wrong_length_raises():
+    wg, builder = _setup()
+    with pytest.raises(ValueError, match="facility_code"):
+        wg.send_card_26bit(builder, facility_code="0000110", facility_code_datatype="bits", card_number=1)
+
+
+def test_send_card_26bit_rejects_byte_oriented_datatype():
+    wg, builder = _setup()
+    with pytest.raises(ValueError, match="'bytes' or 'bits'"):
+        wg.send_card_26bit(builder, facility_code="0c", facility_code_datatype="hex", card_number=1)
+
+
+def test_send_card_26bit_plain_int_backward_compat_unaffected():
+    wg, builder = _setup()
+    wg.send_card_26bit(builder, facility_code=12, card_number=34567)
+    capture = builder.finish()
+    assert not any(a.label == "floating" for a in capture.annotations if a.track == "driver")

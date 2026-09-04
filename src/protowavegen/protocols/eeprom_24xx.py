@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle
-from .base import StackedProtocol, decode_payload, format_byte, register_protocol
+from .base import StackedProtocol, format_byte, register_protocol
+from .payload import decode_payload
 from .i2c import I2CBus
 
 

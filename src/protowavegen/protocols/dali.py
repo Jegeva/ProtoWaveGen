@@ -1,14 +1,8 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle, Signal
-from .base import (
-    DriverTracker,
-    TransportProtocol,
-    bind_clock_samples,
-    bits_of_byte,
-    register_protocol,
-    resolve_single_byte,
-)
+from .base import DriverTracker, TransportProtocol, bind_clock_samples, bits_of_byte, register_protocol
+from .payload import resolve_single_byte
 
 
 @register_protocol("dali")

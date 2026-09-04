@@ -1,14 +1,8 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle, Signal, SignalKind
-from .base import (
-    DriverTracker,
-    TransportProtocol,
-    bits_of_byte,
-    decode_bits_with_floating,
-    microseconds_to_samples,
-    register_protocol,
-)
+from .base import DriverTracker, TransportProtocol, microseconds_to_samples, register_protocol
+from .payload import decode_bits_with_floating
 
 
 @register_protocol("wiegand")
@@ -82,22 +76,70 @@ class WiegandBus(TransportProtocol):
     def _parity_of(bits: list[int]) -> int:
         return sum(bits) % 2
 
-    def send_card_26bit(self, builder: CaptureBuilder, *, facility_code: int, card_number: int) -> FrameHandle:
-        if not (0 <= facility_code < 0x100):
-            raise ValueError(f"facility_code {facility_code} does not fit in 8 bits")
-        if not (0 <= card_number < 0x10000):
-            raise ValueError(f"card_number {card_number} does not fit in 16 bits")
+    @staticmethod
+    def _resolve_card_field(value, datatype: str, *, width: int, name: str) -> tuple[list[int], frozenset[int]]:
+        """`value` is a plain int (`datatype="bytes"`, default, unchanged
+        from before — range-checked to `width` bits) or, with
+        `datatype="bits"`, a flat `0`/`1`/`l/L`/`h/H`/`z/Z` bit-string via
+        `decode_bits_with_floating` (`d0`/`d1` are TRISTATE pull-high, so
+        `z`/`Z` auto-resolves), which must decode to exactly `width` bits —
+        the byte-oriented `"hex"`/`"bin"`/`"text"` datatypes don't apply to
+        a field this narrow, so they're rejected rather than silently
+        misinterpreted as a bit-string."""
 
-        data_bits = bits_of_byte(facility_code) + [
-            (card_number >> i) & 1 for i in reversed(range(16))
-        ]
+        if datatype == "bytes":
+            if not (0 <= value < (1 << width)):
+                raise ValueError(f"{name} {value} does not fit in {width} bits")
+            return [(value >> i) & 1 for i in reversed(range(width))], frozenset()
+        if datatype != "bits":
+            raise ValueError(f"{name}: datatype must be 'bytes' or 'bits', got {datatype!r}")
+        bits, floating = decode_bits_with_floating(value, tristate=True)
+        if len(bits) != width:
+            raise ValueError(f"{name}: expected {width} bits, got {len(bits)} from {value!r}")
+        return bits, floating
+
+    def send_card_26bit(
+        self, builder: CaptureBuilder, *, facility_code, card_number,
+        facility_code_datatype: str = "bytes", card_number_datatype: str = "bytes",
+    ) -> FrameHandle:
+        """`facility_code`/`card_number` are plain ints (`*_datatype=
+        "bytes"`, default, unchanged from before) or, with `*_datatype=
+        "bits"`, a flat bit-string decoded via `_resolve_card_field` —
+        the `l/L/h/H/z/Z` floating-marker alphabet then applies. Parity is
+        computed over the already-resolved concrete bits either way, so a
+        floating marker never affects the parity calculation's
+        correctness."""
+
+        facility_bits, facility_floating = self._resolve_card_field(
+            facility_code, facility_code_datatype, width=8, name="facility_code"
+        )
+        card_bits, card_floating = self._resolve_card_field(
+            card_number, card_number_datatype, width=16, name="card_number"
+        )
+        data_bits = facility_bits + card_bits
+        data_floating = facility_floating | {8 + i for i in card_floating}
+
         leading_parity = self._parity_of(data_bits[:12])  # makes bits 1-13 even
         trailing_parity = 1 - self._parity_of(data_bits[12:])  # makes bits 14-26 odd
-        frame = [leading_parity, *data_bits, trailing_parity]
+        frame_bits = [leading_parity, *data_bits, trailing_parity]
+        frame_floating = {1 + i for i in data_floating}  # +1 for the leading parity bit
 
-        fh = self.send_bits(builder, bits=frame)
+        if frame_floating:
+            # re-render as a floating-capable bit-string for send_bits to
+            # decode again — 'l'/'h' chosen to match the bit already
+            # resolved above, so this round-trip never changes the value.
+            frame = "".join(
+                ("h" if bit else "l") if i in frame_floating else str(bit)
+                for i, bit in enumerate(frame_bits)
+            )
+            fh = self.send_bits(builder, bits=frame, datatype="bits")
+        else:
+            fh = self.send_bits(builder, bits=frame_bits)
+
+        facility_value = int("".join(map(str, facility_bits)), 2)
+        card_value = int("".join(map(str, card_bits)), 2)
         builder.annotate(
-            "field", f"FC={facility_code} CARD={card_number}", start=fh.start, end=fh.end,
-            signals=(self.sig("d0"), self.sig("d1")), facility_code=facility_code, card_number=card_number,
+            "field", f"FC={facility_value} CARD={card_value}", start=fh.start, end=fh.end,
+            signals=(self.sig("d0"), self.sig("d1")), facility_code=facility_value, card_number=card_value,
         )
         return fh

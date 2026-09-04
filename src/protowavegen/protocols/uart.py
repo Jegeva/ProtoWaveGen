@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle, Signal
-from .base import TransportProtocol, bind_clock_samples, decode_payload, format_byte, register_protocol
+from .base import TransportProtocol, bind_clock_samples, format_byte, register_protocol
+from .payload import decode_payload
 
 _VALID_PARITY = {"none", "even", "odd", "mark", "space"}
 _VALID_STOP_BITS = {1, 1.5, 2}

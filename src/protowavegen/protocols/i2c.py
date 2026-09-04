@@ -6,11 +6,10 @@ from .base import (
     TransportProtocol,
     bind_clock_samples,
     bits_of_byte,
-    decode_payload_with_floating,
     format_byte,
-    group_floating_by_byte,
     register_protocol,
 )
+from .payload import decode_payload_with_floating, group_floating_by_byte
 
 _VALID_ADDR_BITS = {7, 10}
 

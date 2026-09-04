@@ -1,15 +1,8 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle, Signal
-from .base import (
-    DriverTracker,
-    TransportProtocol,
-    bind_clock_samples,
-    decode_payload_with_floating,
-    format_byte,
-    group_floating_by_byte,
-    register_protocol,
-)
+from .base import DriverTracker, TransportProtocol, bind_clock_samples, format_byte, register_protocol
+from .payload import decode_payload_with_floating, group_floating_by_byte
 
 _CRC15_POLY = 0x4599
 

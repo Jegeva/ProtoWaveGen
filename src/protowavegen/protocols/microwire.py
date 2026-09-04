@@ -1,13 +1,8 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle, Signal
-from .base import (
-    DriverTracker,
-    TransportProtocol,
-    bind_clock_samples,
-    decode_bits_with_floating,
-    register_protocol,
-)
+from .base import DriverTracker, TransportProtocol, bind_clock_samples, register_protocol
+from .payload import decode_bits_with_floating
 
 
 @register_protocol("microwire")

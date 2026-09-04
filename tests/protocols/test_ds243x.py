@@ -47,3 +47,23 @@ def test_read_memory_direct_path_no_scratchpad():
         0x01, 0x02, 0x03,
     ]
     assert fh.end == capture.duration_samples
+
+
+def test_read_memory_with_floating_marker_annotates_floating():
+    ee, builder = _setup()
+    # "2h" -> 0x2 driven, low nibble floating-high -> 0x2F
+    ee.read_memory(builder, address=0x0020, data="2h", datatype="hex")
+    capture = builder.finish()
+
+    values = [a.data["value"] for a in capture.annotations if a.track == "field" and "value" in a.data]
+    assert values[-1] == 0x2F
+
+    floating = [a for a in capture.annotations if a.track == "driver" and a.label == "floating"]
+    assert len(floating) == 1
+
+
+def test_read_memory_plain_list_backward_compat_unaffected():
+    ee, builder = _setup()
+    ee.read_memory(builder, address=0x0020, data=[0x01, 0x02, 0x03])
+    capture = builder.finish()
+    assert not any(a.label == "floating" for a in capture.annotations if a.track == "driver")

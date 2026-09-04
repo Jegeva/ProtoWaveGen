@@ -9,8 +9,8 @@ from .base import (
     format_byte,
     microseconds_to_samples,
     register_protocol,
-    resolve_single_byte,
 )
+from .payload import resolve_single_byte
 
 
 @register_protocol("ps2")

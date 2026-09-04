@@ -48,3 +48,24 @@ def test_invalid_digit_value_rejected():
     disp, spi, builder = _setup()
     with pytest.raises(ValueError):
         disp.set_digit_values(builder, values=[10])
+
+
+def test_set_digits_with_floating_marker_annotates_floating():
+    disp, spi, builder = _setup()
+    # "2h" -> 0x2 driven, low nibble floating-high -> 0x2F
+    fh = disp.set_digits(builder, patterns="2h", datatype="hex")
+    capture = builder.finish()
+    assert fh is not None
+
+    field = [a for a in capture.annotations if a.track == "field" and "mosi" in a.data][0]
+    assert field.data["mosi"] == 0x2F
+
+    floating = [a for a in capture.annotations if a.track == "driver" and a.label == "floating"]
+    assert len(floating) == 1
+
+
+def test_set_digits_plain_list_backward_compat_unaffected():
+    disp, spi, builder = _setup()
+    disp.set_digits(builder, patterns=[0b00111111, 0b00000110])
+    capture = builder.finish()
+    assert not any(a.label == "floating" for a in capture.annotations if a.track == "driver")

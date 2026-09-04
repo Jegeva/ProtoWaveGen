@@ -50,13 +50,15 @@ class SevenSegmentDisplay(StackedProtocol):
             builder.set_level(latch, 0)
         builder.annotate("field", "LATCH", start=latch_fh.start, end=latch_fh.end, signals=(latch,))
 
-    def set_digits(self, builder: CaptureBuilder, *, patterns: list[int]) -> FrameHandle:
+    def set_digits(self, builder: CaptureBuilder, *, patterns, datatype: str = "bytes") -> FrameHandle:
         """`patterns`, one raw segment-bit byte per digit, chain order =
         shift order (the first pattern ends up in the last/farthest
         shift-register stage once latched, matching real daisy-chained
-        74HC595 wiring)."""
+        74HC595 wiring). Forwarded straight to `SpiBus.transfer()`'s
+        `mosi`/`datatype` — reaches it completely unmixed with anything
+        else, so it inherits full floating-marker support for free."""
 
-        fh = self.transport.transfer(builder, mosi=patterns)
+        fh = self.transport.transfer(builder, mosi=patterns, datatype=datatype)
         self._pulse_latch(builder)
         return fh
 

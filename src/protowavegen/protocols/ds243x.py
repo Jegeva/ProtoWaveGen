@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle
-from .base import decode_payload, format_byte, register_protocol
+from .base import format_byte, register_protocol
+from .payload import decode_payload
 from .checksums import crc16_modbus
 from .onewire_rom import OneWireDevice
 
@@ -57,13 +58,17 @@ class Ds243x(OneWireDevice):
         )
 
     def read_memory(self, builder: CaptureBuilder, *, address: int, data, datatype: str = "bytes") -> FrameHandle:
-        """`data` is the synthesized memory contents at `address` onward."""
+        """`data` is the synthesized memory contents at `address` onward.
+        Forwarded straight to `OneWireBus.read()` (unlike `write_memory`,
+        this field reaches the transport call completely unmixed with any
+        other bytes), so it inherits `OneWireBus.read()`'s full
+        floating-marker support and its default per-byte `format_byte`
+        labels for free — nothing extra to do here."""
 
-        data = decode_payload(data, datatype)
         addr_lo, addr_hi = address & 0xFF, (address >> 8) & 0xFF
         self._address_rom(builder)
         self.transport.write(
             builder, data=[_READ_MEMORY, addr_lo, addr_hi],
             labels=["CMD=READ_MEM", f"ADDR_LO=0x{addr_lo:02X}", f"ADDR_HI=0x{addr_hi:02X}"],
         )
-        return self.transport.read(builder, data=data, labels=[format_byte(b) for b in data])
+        return self.transport.read(builder, data=data, datatype=datatype)

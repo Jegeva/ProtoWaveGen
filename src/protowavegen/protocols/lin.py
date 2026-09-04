@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from ..model import CaptureBuilder, FrameHandle
-from .base import StackedProtocol, decode_payload, register_protocol
+from .base import StackedProtocol, register_protocol
+from .payload import decode_payload
 from .uart import UartTransport
 
 _VALID_CHECKSUM = {"classic", "enhanced"}
