@@ -89,10 +89,11 @@ expensive one:
   test's oracle. This reintroduces *some* of the same-author risk the whole
   round-trip methodology exists to avoid, so it's only acceptable when a
   second, independent oracle would cost more to build than it's worth (see
-  USB HID/CDC/MSC/DFU, not yet implemented — Wireshark's class-dissector
-  activation there needs a full, undocumented enumeration-sequence state
-  machine correlating usbmon event pairs, estimated 300-500+ fragile lines
-  for a weaker guarantee than the custom decoder alone already gives).
+  USB HID/CDC/MSC/DFU — Wireshark's class-dissector activation there needs
+  a full, undocumented enumeration-sequence state machine correlating
+  usbmon event pairs, estimated 300-500+ fragile lines for a weaker
+  guarantee than the custom decoder alone already gives, so all four
+  shipped single-oracle instead).
 - **Self-authored decoder, dual-oracle** (IrDA): sigrok has no IrDA decoder
   at any layer, and a cheap, genuinely independent second oracle exists
   (Wireshark's real `irlap`/`irlmp` dissector, driven via a hand-built
@@ -107,7 +108,7 @@ and are loaded by pointing `sigrok-cli` at `tests/custom_decoders/` via the
 (`sigrok-cli -l 4`'s verbose log lists both paths) that this variable *adds*
 to sigrok's system decoder search path rather than replacing it, so a
 custom decoder stacking on a system one in the same `-P` spec (as USB's
-future HID/CDC/MSC/DFU decoders will, on top of sigrok's own `usb_packet`)
+HID/CDC/MSC/DFU decoders do, on top of sigrok's own `usb_packet`)
 still works. `tests/test_sigrok_roundtrip.py`'s `_decode_custom()` helper
 sets this env var; `_decode()` (no env override) is for mainline/vendored
 decoders that don't need it.
