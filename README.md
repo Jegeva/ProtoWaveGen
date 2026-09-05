@@ -6,13 +6,13 @@ sigrok-compatible capture files (`.sr`/`.vcd`, importable into
 PulseView/sigrok-cli or GTKWave as if a real logic analyzer had captured
 them).
 
-41 protocols: UART, I2C, SPI/QSPI/OctoSPI, 1-Wire, CAN, DALI, Wiegand,
+45 protocols: UART, I2C, SPI/QSPI/OctoSPI, 1-Wire, CAN, DALI, Wiegand,
 PS/2, Microwire, NES gamepad, IR RC-5, IR NEC, IR RC-6, TLC5620, EM4100,
-AM230x, DCF77, I3C, IrDA, USB (Full-Speed), plus 21 application-layer
+AM230x, DCF77, I3C, IrDA, USB (Full-Speed), plus 25 application-layer
 devices stacked on those (LIN, Modbus RTU, DMX512, LM75, 24xx EEPROM,
 DS1307, TCA6408A, MLX90614, Nunchuk, ADXL345, PCA9571, RTC-8564, JEDEC
 CFI, MAX7219, SD-card-SPI-mode, 7-segment, SPI flash, DS2408, DS243x,
-DS28EA00, 93xx EEPROM).
+DS28EA00, 93xx EEPROM, USB HID, USB CDC/ACM, USB Mass Storage, USB DFU).
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"

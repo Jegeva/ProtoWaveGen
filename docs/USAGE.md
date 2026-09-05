@@ -31,7 +31,9 @@ transport family:
 - [AM230x](protocols/am230x.md)
 - [DCF77](protocols/dcf77.md)
 - [IrDA](protocols/irda.md) — SIR + IrLAP
-- [USB](protocols/usb.md) — Full-Speed control transfers
+- [USB](protocols/usb.md) — Full-Speed control transfers, plus
+  [USB HID](protocols/usb_hid.md), [USB CDC/ACM](protocols/usb_cdc.md),
+  [USB Mass Storage](protocols/usb_msc.md), [USB DFU](protocols/usb_dfu.md)
 
 ## Install
 

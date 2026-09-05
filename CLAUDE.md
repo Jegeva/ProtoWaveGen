@@ -37,7 +37,7 @@ this tool.
 
 **Passing `pytest` is necessary but not sufficient.** Before considering any
 change to a protocol, the model, or an output writer done, run the CLI
-against every example config in `examples/` (41 protocols, 42 example
+against every example config in `examples/` (45 protocols, 46 example
 configs — I2C has two) and confirm each one actually writes its SVG, `.sr`,
 and `.vcd` output:
 
@@ -63,8 +63,8 @@ match what was encoded — the strongest correctness check available, since a
 separately-written decoder reconstructing exactly what we intended to
 encode proves the waveform is electrically correct, not just internally
 self-consistent with our own hand-derived expected-edge assertions
-elsewhere in the suite. It's a normal part of `pytest` (35 round-trip tests
-total as of USB/I3C/IrDA), not a separate step, but auto-skips if
+elsewhere in the suite. It's a normal part of `pytest` (39 round-trip tests
+total as of USB HID/CDC/MSC/DFU), not a separate step, but auto-skips if
 `sigrok-cli` (and, for IrDA's cross-check, `tshark`) isn't on `PATH` — so a
 green suite elsewhere doesn't guarantee this ran; check for skips.
 
@@ -397,7 +397,7 @@ Everything flows through one pipeline, orchestrated by
   it's unambiguous; otherwise `--data-target protocol_id:op_index[:field]`
   is required, and the resulting `ValueError` lists every candidate in that
   exact syntax so it can be copied straight into `--data-target`.
-- 41 protocols are implemented (one file each under `protocols/`, one
+- 45 protocols are implemented (one file each under `protocols/`, one
   `<name>_basic.json` each under `examples/`). Twenty are
   `TransportProtocol`s with their own physical-layer bit timing:
   **UART** (`uart.py`), **I2C** (`i2c.py`, 7/10-bit addressing,
@@ -434,8 +434,17 @@ Everything flows through one pipeline, orchestrated by
   SD-card-SPI-mode (real CRC-7), 7-segment (`seven_segment.py`), SPI
   flash (`spiflash.py`)** on `SpiBus`; **DS2408, DS243x, DS28EA00**
   (1-Wire CRC-8, `checksums.py` + `onewire_rom.py`'s shared Skip-ROM/
-  Match-ROM prelude) on `OneWireBus`; and **93xx EEPROM**
-  (`microwire_93xx.py`) on `MicrowireBus`. `protocols/base.py`'s module
+  Match-ROM prelude) on `OneWireBus`; **93xx EEPROM**
+  (`microwire_93xx.py`) on `MicrowireBus`; and, most recently, **USB HID,
+  USB CDC/ACM, USB Mass Storage, USB DFU** (`usb_hid.py`/`usb_cdc.py`/
+  `usb_msc.py`/`usb_dfu.py`) on `UsbBus` — each a deliberately narrow,
+  real-but-scoped device subset (mouse HID reports, virtual-serial
+  line-coding + bulk data, Bulk-Only-Transport SCSI READ10/WRITE10, and
+  DFU download/upload/status respectively), validated via self-authored
+  custom sigrok decoders vendored under `tests/custom_decoders/usb_*/`
+  since no mainline decoder exists at that layer (see
+  `docs/protocols/usb_hid.md`/`usb_cdc.md`/`usb_msc.md`/`usb_dfu.md`).
+  `protocols/base.py`'s module
   docstring-level pattern (real signals + a docstring describing the
   intended algorithm, `generate()`/methods raising `NotImplementedError`
   until implemented) is the template for scaffolding a new one before it's
