@@ -28,6 +28,7 @@ _METADATA_PARAMS = {
     "self", "builder", "datatype", "labels", "write_labels", "read_labels",
     "nack", "nack_last", "address", "identifier", "rtr", "channel", "direction",
     "checksum", "frame_id", "word_addr", "inter_byte_gap_bits", "pre_delay_bits", "driver",
+    "pid", "endpoint",
 }
 
 # (class name, method name) pairs already vetted by hand as genuinely

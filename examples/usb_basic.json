@@ -1,0 +1,23 @@
+{
+  "samplerate": 192000000,
+  "protocols": [
+    {
+      "id": "usb0",
+      "type": "usb",
+      "operations": [
+        {
+          "op": "control_transfer",
+          "address": 5,
+          "endpoint": 0,
+          "setup_data": [128, 6, 0, 1, 0, 0, 8, 0],
+          "in_data": [18, 1, 16, 1, 0, 0, 0, 64]
+        }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/usb_basic.svg" },
+    { "type": "sigrok", "path": "output/usb_basic.sr" },
+    { "type": "vcd", "path": "output/usb_basic.vcd" }
+  ]
+}
