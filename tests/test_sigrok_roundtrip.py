@@ -151,18 +151,13 @@ def test_pca9571_roundtrips_through_sigroks_pca9571_decoder(tmp_path):
 
 def test_rtc8564_roundtrips_through_sigroks_rtc8564_decoder(tmp_path):
     """sigrok's `rtc8564` decoder only prints its "Read/Write date/time"
-    summary line once it sees a real STOP condition — `I2CBus`'s
-    `_stop_condition()` has its own pre-existing edge-shape bug (distinct
-    from the repeated-START bug fixed in `i2c.py` this session) where a
-    transaction ending in a NACK'd byte (the default for the last byte of
-    any read, including this one) produces a spurious START-shaped edge
-    right before the real STOP — confirmed via this exact capture, where
-    the base `i2c` decoder's own event stream ends in a bogus "Start
-    repeat" instead of "Stop". Left as a follow-up (out of scope for this
-    batch — fixing `_stop_condition()` correctly touches every existing
-    transaction's edge count, unlike the narrowly-scoped `_start_condition`
-    fix). This test asserts the decoder's per-register annotations
-    instead, which decode correctly regardless."""
+    summary line once it sees a real STOP condition. This used to be
+    unreachable here: `I2CBus._stop_condition()` had its own edge-shape
+    bug (fixed alongside this test) where a transaction ending in a
+    NACK'd byte (the default for the last byte of any read, including
+    this one) produced a spurious START-shaped edge right before the real
+    STOP. Now fixed, so this asserts both the per-register annotations
+    and the summary line."""
 
     config = Config(
         samplerate=4_000_000,
@@ -186,6 +181,7 @@ def test_rtc8564_roundtrips_through_sigroks_rtc8564_decoder(tmp_path):
     assert "Day: 5" in decoded
     assert "Month: 3" in decoded
     assert "Year: 26" in decoded
+    assert "Read date/time: 05.03.26 14:30:45" in decoded
 
 
 def test_lin_frame_bytes_roundtrip_through_sigroks_uart_decoder(tmp_path):

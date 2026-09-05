@@ -116,20 +116,31 @@ timing code:
   already exercised by every existing `write_then_read()` caller —
   `ds1307`, `tca6408a`, `lm75`, `eeprom_24xx` — none of which happened to
   assert exact absolute sample counts sensitive to it).
-- **Known follow-up, not yet fixed**: `I2CBus._stop_condition()` has the
-  same class of bug in the opposite direction — called right after a
-  *NACK'd* byte (SDA already high, the default ending for any read via
-  `nack_last=True`), its own "make sure SDA is idle-low first" step
-  produces a spurious START-shaped edge immediately before the real STOP
-  edge. Confirmed via the same `rtc8564` round-trip test: the base `i2c`
-  decoder's event stream ends in a bogus "Start repeat" instead of
-  "Stop", so any decoder gating a summary annotation on a real STOP
-  (`rtc8564` does; most per-byte-annotating decoders like `pca9571` don't
-  care and are unaffected) never fires it. Left unfixed deliberately —
-  unlike the START-side fix above, this one changes *every* transaction's
-  final edge shape/timing in the entire codebase, not just the repeated-
-  START path, so it needs its own dedicated fix-and-regression pass
-  rather than folding into an unrelated batch of protocol additions.
+- `I2CBus._stop_condition()` had the same class of bug in the opposite
+  direction, since fixed: called right after a *NACK'd* byte (SDA already
+  high, the default ending for any read via `nack_last=True`), its own
+  "make sure SDA is idle-low first" step produced a spurious START-shaped
+  edge immediately before the real STOP edge. Confirmed via the same
+  `rtc8564` round-trip test: the base `i2c` decoder's event stream ended
+  in a bogus "Start repeat" instead of "Stop", so any decoder gating a
+  summary annotation on a real STOP (`rtc8564` does; most per-byte-
+  annotating decoders like `pca9571` don't care and were unaffected)
+  never fired it. Fixed the same way as the START-side case: bring SCL
+  low first so SDA can drop safely before the real STOP edge. Verified
+  zero regressions (every affected test only checks relative frame
+  positions/decoded values, none assert exact absolute sample counts —
+  confirmed by grepping every test touching `read()`/`write_then_read()`
+  for exact-edge/exact-duration assertions before applying the fix, not
+  just assuming). `rtc8564`'s round-trip test now also asserts the
+  previously-unreachable "Read date/time: ..." summary line.
+  Searched the rest of the codebase for the same bug shape
+  (`grep -rn "level_of" src/protowavegen/protocols/`) and found it used
+  nowhere else — `spi.py`'s own back-to-back-CS fix (a different bug,
+  same session) uses an unconditional idle-time gap instead of a
+  runtime-level-conditional guard, and `onewire.py`'s slots always force
+  a fresh falling edge unconditionally by design — neither is vulnerable
+  to this specific "conditional guard forces an unintended semantic edge"
+  shape.
 
 Some of sigrok's own decoders have quirks/limitations confirmed unrelated
 to us — found by reading their source under

@@ -138,6 +138,21 @@ class I2CBus(TransportProtocol):
         shb = self._samples_per_half_bit
         with builder.frame() as fh:
             if builder.level_of(sda) == 1:
+                # SDA is already high (e.g. right after a NACK'd byte —
+                # the default ending for any read via `nack_last=True` —
+                # where SCL is also still high per _clock_bit's ending
+                # state). Lowering SDA directly here (SCL high, SDA
+                # high->low) would itself be a real START condition —
+                # confirmed via sigrok's base `i2c` decoder reporting a
+                # bogus "Start repeat" as a transaction's final event
+                # instead of "Stop", so `rtc8564`'s decoder (which gates
+                # its date/time summary on seeing a real STOP) never
+                # closed out. Bring SCL low first so SDA can drop safely
+                # before the real STOP edge — the mirror-image fix of
+                # `_start_condition`'s own repeated-START case above.
+                builder.set_level(scl, 0)
+                self._scl_driver.set("master")
+                builder.advance(shb)
                 builder.set_level(sda, 0)
                 self._sda_driver.set("master")
                 builder.advance(shb)
