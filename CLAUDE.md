@@ -37,9 +37,9 @@ this tool.
 
 **Passing `pytest` is necessary but not sufficient.** Before considering any
 change to a protocol, the model, or an output writer done, run the CLI
-against every example config in `examples/` (one per supported protocol —
-27 of them) and confirm each one actually writes its SVG, `.sr`, and `.vcd`
-output:
+against every example config in `examples/` (41 protocols, 42 example
+configs — I2C has two) and confirm each one actually writes its SVG, `.sr`,
+and `.vcd` output:
 
 ```bash
 for f in examples/*.json; do
@@ -57,17 +57,65 @@ protocol. A change isn't verified until all currently-supported protocols
 have generated real output through the CLI, not just green tests.
 
 `sigrok-cli` is installed in this environment and is looped into the suite:
-`tests/test_sigrok_roundtrip.py` decodes our generated `.sr` files with
-sigrok's own, independently-implemented decoders (UART, I2C, SPI, CAN,
-1-Wire, Modbus, Wiegand, DALI, Microwire/93xx EEPROM, PS/2, and LIN — 13
-round-trip tests total) and asserts the decoded values match what was
-encoded. This is the strongest correctness check available — a real
+`tests/test_sigrok_roundtrip.py` decodes our generated `.sr` files with a
+real, independently-implemented decoder and asserts the decoded values
+match what was encoded — the strongest correctness check available, since a
 separately-written decoder reconstructing exactly what we intended to
 encode proves the waveform is electrically correct, not just internally
 self-consistent with our own hand-derived expected-edge assertions
-elsewhere in the suite. It's a normal part of `pytest`, not a separate
-step, but auto-skips if `sigrok-cli` isn't on `PATH` — so a green suite
-elsewhere doesn't guarantee this ran; check for skips.
+elsewhere in the suite. It's a normal part of `pytest` (35 round-trip tests
+total as of USB/I3C/IrDA), not a separate step, but auto-skips if
+`sigrok-cli` (and, for IrDA's cross-check, `tshark`) isn't on `PATH` — so a
+green suite elsewhere doesn't guarantee this ran; check for skips.
+
+**The independent decoder isn't always the same kind of thing**, and which
+tier a protocol gets is a deliberate choice, not an oversight — a future
+protocol addition should pick the cheapest tier that's still a genuine
+second, independently-authored implementation, not default to the most
+expensive one:
+- **Mainline sigrok decoder** (the default, used by every protocol through
+  the original 38): a real decoder already ships in `libsigrokdecode` (UART,
+  I2C, SPI, CAN, 1-Wire, Modbus, Wiegand, DALI, Microwire/93xx EEPROM, PS/2,
+  LIN, and more) — zero authoring risk, just point `sigrok-cli -P` at it.
+- **Third-party vendored decoder** (I3C): no mainline decoder exists, but a
+  real, actively-maintained third-party one does
+  (`xyphro/Sigrok-I3C-decoder`, GPL-3.0) — vendored into
+  `tests/custom_decoders/i3c/` with its license and an attribution header,
+  loaded via `SIGROKDECODE_DIR` (see below). Still a genuinely independent
+  author; zero decoder-authoring risk on our side.
+- **Self-authored decoder, single-oracle** (used by several existing
+  stacked protocols with no dedicated decoder, e.g. DALI's ballast replies):
+  when neither of the above exists, we write our own `Decoder` class as the
+  test's oracle. This reintroduces *some* of the same-author risk the whole
+  round-trip methodology exists to avoid, so it's only acceptable when a
+  second, independent oracle would cost more to build than it's worth (see
+  USB HID/CDC/MSC/DFU, not yet implemented — Wireshark's class-dissector
+  activation there needs a full, undocumented enumeration-sequence state
+  machine correlating usbmon event pairs, estimated 300-500+ fragile lines
+  for a weaker guarantee than the custom decoder alone already gives).
+- **Self-authored decoder, dual-oracle** (IrDA): sigrok has no IrDA decoder
+  at any layer, and a cheap, genuinely independent second oracle exists
+  (Wireshark's real `irlap`/`irlmp` dissector, driven via a hand-built
+  synthetic pcap — see `tests/_irda_pcap.py`), so both are used and
+  cross-checked against each other on the same semantic fields
+  (address/control/payload), not diffed as raw text.
+
+Custom decoders (self-authored or vendored) live under
+`tests/custom_decoders/<id>/` in sigrok's own `__init__.py`+`pd.py` layout,
+and are loaded by pointing `sigrok-cli` at `tests/custom_decoders/` via the
+`SIGROKDECODE_DIR` environment variable — confirmed empirically
+(`sigrok-cli -l 4`'s verbose log lists both paths) that this variable *adds*
+to sigrok's system decoder search path rather than replacing it, so a
+custom decoder stacking on a system one in the same `-P` spec (as USB's
+future HID/CDC/MSC/DFU decoders will, on top of sigrok's own `usb_packet`)
+still works. `tests/test_sigrok_roundtrip.py`'s `_decode_custom()` helper
+sets this env var; `_decode()` (no env override) is for mainline/vendored
+decoders that don't need it.
+
+USB's own transport core needs no custom decoder at all: sigrok's existing
+3-decoder stack (`usb_signalling` electrical→symbols, `usb_packet`
+SYNC/PID/CRC framing, `usb_request` SETUP/transaction tracking) already
+validates it end to end, same "mainline decoder" tier as everything else.
 
 It found three classes of real bug, all worth knowing before touching
 timing code:
@@ -141,6 +189,28 @@ timing code:
   a fresh falling edge unconditionally by design — neither is vulnerable
   to this specific "conditional guard forces an unintended semantic edge"
   shape.
+- `I3CBus`'s own START/STOP condition primitives (`i3c.py`) are a *separate*
+  implementation from `I2CBus`'s, deliberately not a reuse of the
+  already-fixed I2C versions above — the vendored `xyphro/Sigrok-I3C-decoder`
+  only finalizes a transfer's 9th bit (T-bit/ACK) on a falling SCL edge, and
+  does no START/STOP handling at all while it's still waiting for one.
+  Naively porting I2C's conditional "only raise SDA if it's not already
+  high" guard shape into I3C silently dropped 4 of 5 STOP/START pairs on
+  first attempt. Fixed by having I3C's condition primitives unconditionally
+  pulse SCL low before every real START/STOP edge, rather than trying to
+  detect and special-case the entry state the way I2C's fix does — a
+  stricter decoder can require a stricter encoder-side shape even when the
+  electrical intent is identical.
+- The IrDA custom decoder (`tests/custom_decoders/irda/pd.py`)'s first
+  draft had the same class of edge-vs-timeout race documented above for
+  `onewire_link`, but self-inflicted this time: it tried to classify each
+  SIR bit by hunting for the pulse's edges rather than sampling the bit
+  cell at its nominal midpoint, and IrDA's own encoding always places a
+  pulse's edge exactly on the previous bit cell's boundary sample — a
+  textbook case of the same "boundary-exact timing is one quantization
+  error from misclassifying" lesson, just found in a decoder we wrote
+  ourselves instead of one sigrok ships. Fixed the same way as the general
+  lesson prescribes: sample at the midpoint, don't edge-hunt.
 
 Some of sigrok's own decoders have quirks/limitations confirmed unrelated
 to us — found by reading their source under
@@ -327,8 +397,8 @@ Everything flows through one pipeline, orchestrated by
   it's unambiguous; otherwise `--data-target protocol_id:op_index[:field]`
   is required, and the resulting `ValueError` lists every candidate in that
   exact syntax so it can be copied straight into `--data-target`.
-- 38 protocols are implemented (one file each under `protocols/`, one
-  `<name>_basic.json` each under `examples/`). Seventeen are
+- 41 protocols are implemented (one file each under `protocols/`, one
+  `<name>_basic.json` each under `examples/`). Twenty are
   `TransportProtocol`s with their own physical-layer bit timing:
   **UART** (`uart.py`), **I2C** (`i2c.py`, 7/10-bit addressing,
   `write_then_read()` for the set-pointer-then-repeated-START-read idiom
@@ -347,8 +417,15 @@ Everything flows through one pipeline, orchestrated by
   quad DAC), **EM4100** (`em4100.py`, Manchester-encoded 125kHz RFID),
   **AM230x** (`am230x.py`, a DHTxx-family humidity/temperature sensor,
   pulse-width-timed like 1-Wire but with no ROM addressing), and **DCF77**
-  (`dcf77.py`, a 1-bit-per-second longwave time signal). Everything else
-  is a `StackedProtocol` wrapping one of those — an application-layer
+  (`dcf77.py`, a 1-bit-per-second longwave time signal); plus three most
+  recently added: **I3C** (`i3c.py`, SDR mode — reuses I2C's open-drain
+  START/STOP/address-phase electrical behavior, adds a push-pull data
+  phase, a T-bit/parity in place of I2C's plain ACK, and Dynamic Address
+  Assignment via ENTDAA), **IrDA** (`irda.py`, SIR physical encoding —
+  pulse-per-bit-cell — under IrLAP link-layer framing with a real CRC-16/
+  X-25 FCS), and **USB** (`usb.py`, Full-Speed only — NRZI + bit-stuffing,
+  SYNC/PID framing, CRC5 token / CRC16 data, control transfers). Everything
+  else is a `StackedProtocol` wrapping one of those — an application-layer
   device/protocol adding no new bit-timing of its own: **LIN** and
   **Modbus RTU** (real CRC16, `checksums.py`) on `UartTransport`;
   **DMX512** on `UartTransport` too (break+bytes, same shape as LIN);

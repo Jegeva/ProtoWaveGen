@@ -12,11 +12,11 @@ own operations and example configs are documented separately, one page per
 transport family:
 
 - [I2C](protocols/i2c.md) — plus LM75, 24xx EEPROM, DS1307, TCA6408A,
-  MLX90614, Nunchuk, ADXL345
+  MLX90614, Nunchuk, ADXL345, PCA9571, RTC-8564
 - [I3C](protocols/i3c.md) — ENTDAA, broadcast/direct CCCs, private
   read/write
 - [SPI/QSPI/OctoSPI](protocols/spi.md) — plus JEDEC CFI, MAX7219,
-  SD-card-SPI-mode, 7-segment shift register
+  SD-card-SPI-mode, 7-segment shift register, SPI flash
 - [UART](protocols/uart.md) — plus LIN, Modbus RTU, DMX512
 - [1-Wire](protocols/onewire.md) — plus DS2408, DS243x, DS28EA00
 - [Microwire](protocols/microwire.md) — plus 93xx-series EEPROM
@@ -25,6 +25,13 @@ transport family:
 - [Wiegand](protocols/wiegand.md)
 - [PS/2](protocols/ps2.md)
 - [NES gamepad](protocols/nes_gamepad.md)
+- [IR remotes](protocols/ir.md) — RC-5, NEC, RC-6
+- [TLC5620](protocols/tlc5620.md)
+- [EM4100](protocols/em4100.md)
+- [AM230x](protocols/am230x.md)
+- [DCF77](protocols/dcf77.md)
+- [IrDA](protocols/irda.md) — SIR + IrLAP
+- [USB](protocols/usb.md) — Full-Speed control transfers
 
 ## Install
 
