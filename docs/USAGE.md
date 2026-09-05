@@ -13,6 +13,8 @@ transport family:
 
 - [I2C](protocols/i2c.md) — plus LM75, 24xx EEPROM, DS1307, TCA6408A,
   MLX90614, Nunchuk, ADXL345
+- [I3C](protocols/i3c.md) — ENTDAA, broadcast/direct CCCs, private
+  read/write
 - [SPI/QSPI/OctoSPI](protocols/spi.md) — plus JEDEC CFI, MAX7219,
   SD-card-SPI-mode, 7-segment shift register
 - [UART](protocols/uart.md) — plus LIN, Modbus RTU, DMX512

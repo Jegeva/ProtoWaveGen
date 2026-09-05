@@ -1,3 +1,4 @@
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -10,6 +11,13 @@ from protowavegen.outputs.sigrok_writer import SigrokWriter
 
 SIGROK_CLI = shutil.which("sigrok-cli")
 pytestmark = pytest.mark.skipif(SIGROK_CLI is None, reason="sigrok-cli not installed")
+
+# MIPI I3C has no mainline sigrok decoder, so its round-trip test below uses
+# a vendored third-party one instead (see tests/custom_decoders/i3c/'s own
+# header comment for provenance/license) — loaded by pointing sigrok-cli's
+# SIGROKDECODE_DIR at its parent directory, in *addition* to (not replacing)
+# the system decoder path, exactly like every other decoder in this file.
+_CUSTOM_DECODERS_DIR = Path(__file__).parent / "custom_decoders"
 
 
 def _write_sr(config: Config, path: Path) -> None:
@@ -43,6 +51,26 @@ def _decode(
     result = subprocess.run(
         [SIGROK_CLI, "-i", str(sr_path), "-P", pd_spec, "-A", filter_spec],
         capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    return [line.split(": ", 1)[1] for line in result.stdout.splitlines() if ": " in line]
+
+
+def _decode_custom(
+    sr_path: Path, pd_spec: str, annotation_class: str | None, decoder_id: str | None = None
+) -> list[str]:
+    """Like `_decode()`, but for a decoder that isn't part of mainline
+    libsigrokdecode — points `sigrok-cli` at `_CUSTOM_DECODERS_DIR` via the
+    `SIGROKDECODE_DIR` environment variable (confirmed to add to, not
+    replace, the system decoder search path) so it can find one vendored
+    under `tests/custom_decoders/`."""
+
+    decoder_id = decoder_id or pd_spec.split(":")[0]
+    filter_spec = decoder_id if annotation_class is None else f"{decoder_id}={annotation_class}"
+    result = subprocess.run(
+        [SIGROK_CLI, "-i", str(sr_path), "-P", pd_spec, "-A", filter_spec],
+        capture_output=True, text=True, timeout=30,
+        env={**os.environ, "SIGROKDECODE_DIR": str(_CUSTOM_DECODERS_DIR)},
     )
     assert result.returncode == 0, result.stderr
     return [line.split(": ", 1)[1] for line in result.stdout.splitlines() if ": " in line]
@@ -1012,3 +1040,80 @@ def test_spi_with_floating_marker_still_roundtrips_through_sigrok(tmp_path):
     pd = "spi:clk=spi0.sclk:mosi=spi0.mosi:miso=spi0.miso:cs=spi0.cs"
     assert _decode(sr_path, pd, "mosi-data") == ["F0"]
     assert _decode(sr_path, pd, "miso-data") == ["03"]
+
+
+def test_i3c_roundtrips_through_vendored_i3c_decoder(tmp_path):
+    """MIPI I3C has no mainline sigrok decoder, so this validates against a
+    real, actively-maintained third-party one instead
+    (https://github.com/xyphro/Sigrok-I3C-decoder), vendored under
+    tests/custom_decoders/i3c/ and loaded via `_decode_custom()`. Exercises
+    ENTDAA (single target — this tool's deliberate v1 scope), a broadcast
+    CCC, a direct CCC read, and a private write/read — covering both this
+    bus's open-drain address phase and its I3C-native push-pull/T-bit data
+    phase in one capture.
+
+    The trailing no-op `private_write` exists only to flush the private
+    read's own final STOP condition: the vendored decoder queues every
+    annotation — even ones with a concrete end sample — and only flushes
+    the queue at the start of processing the *next* edge event in the
+    whole file (see its `annotationQueue`/`processAnnotationQueue`
+    methods), so the very last annotation of an entire capture, with no
+    further edge after it, is silently dropped. Confirmed empirically
+    (the same capture without a trailing op is missing exactly one STOP,
+    always the last one) and by reading the source; not something our own
+    waveform shape can fix, since nothing but more real bus activity would
+    supply the edge needed to flush it — same class of "needs a following
+    event to flush the last frame" decoder limitation already documented
+    for ps2/lin/dcf77/em4100 above, worked around the same way here.
+    """
+
+    config = Config(
+        samplerate=4_000_000,
+        protocols=[
+            {
+                "id": "i3c0", "type": "i3c",
+                "params": {"clock_hz": 100_000},
+                "operations": [
+                    {
+                        "op": "entdaa",
+                        "targets": [
+                            {"pid": 0x123456789ABC, "bcr": 0x10, "dcr": 0x63, "dynamic_address": 0x08}
+                        ],
+                    },
+                    {"op": "broadcast_ccc", "code": 0x0C, "data": [0x01]},
+                    {"op": "direct_ccc", "address": 0x08, "code": 0x8F, "read": True, "data": [0x00] * 6},
+                    {"op": "private_write", "address": 0x08, "data": [0xDE, 0xAD]},
+                    {"op": "private_read", "address": 0x08, "data": [0xBE, 0xEF]},
+                    {"op": "private_write", "address": 0x08, "data": [0x00]},  # flushes the read above
+                ],
+            }
+        ],
+        outputs=[],
+    )
+    sr_path = tmp_path / "i3c.sr"
+    _write_sr(config, sr_path)
+
+    pd = "i3c:scl=i3c0.scl:sda=i3c0.sda"
+    assert _decode_custom(sr_path, pd, "start") == ["Start"] * 6
+    assert _decode_custom(sr_path, pd, "repeat-start") == ["Start repeat"] * 2
+    # 6 transactions but only 5 STOPs: the 6th (flush) op's own STOP is the
+    # one dropped by the decoder's queue-flush-on-next-edge limitation.
+    assert _decode_custom(sr_path, pd, "stop") == ["Stop"] * 5
+    assert _decode_custom(sr_path, pd, "warning") == []
+
+    addr_data = _decode_custom(sr_path, pd, "addr-data")
+    assert "Data write: 07" in addr_data  # ENTDAA CCC code
+    assert "Address read: 7E" in addr_data  # ENTDAA read header
+    for byte in ("12", "34", "56", "78", "9A", "BC", "10", "63"):  # PID + BCR + DCR
+        assert f"ENTDAA read: {byte}" in addr_data
+    assert "Data write: 10" in addr_data  # assigned dynamic address 0x08 << 1
+    assert "Data write: 0C" in addr_data  # broadcast CCC code
+    assert "Data write: 01" in addr_data  # broadcast CCC defining byte
+    assert "Data write: 8F" in addr_data  # direct CCC code (GETPID)
+    assert "Address read: 08" in addr_data  # direct CCC's own target read header
+    assert addr_data.count("Data read: 00") == 6  # GETPID's 6 placeholder reply bytes
+    assert "Address write: 08" in addr_data
+    assert "Data write: DE" in addr_data
+    assert "Data write: AD" in addr_data
+    assert "Data read: BE" in addr_data
+    assert "Data read: EF" in addr_data

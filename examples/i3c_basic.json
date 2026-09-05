@@ -1,0 +1,27 @@
+{
+  "samplerate": 4000000,
+  "protocols": [
+    {
+      "id": "i3c0",
+      "type": "i3c",
+      "params": { "clock_hz": 100000 },
+      "operations": [
+        {
+          "op": "entdaa",
+          "targets": [
+            { "pid": 20015998343868, "bcr": 16, "dcr": 99, "dynamic_address": 8 }
+          ]
+        },
+        { "op": "broadcast_ccc", "code": 12, "data": [1] },
+        { "op": "direct_ccc", "address": 8, "code": 143, "read": true, "data": [0, 0, 0, 0, 0, 0] },
+        { "op": "private_write", "address": 8, "data": [222, 173] },
+        { "op": "private_read", "address": 8, "data": [190, 239] }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/i3c_basic.svg" },
+    { "type": "sigrok", "path": "output/i3c_basic.sr" },
+    { "type": "vcd", "path": "output/i3c_basic.vcd" }
+  ]
+}
