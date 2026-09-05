@@ -1,3 +1,4 @@
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -8,8 +9,13 @@ from protowavegen.app import TimingDiagramApplication
 from protowavegen.config import Config
 from protowavegen.outputs.sigrok_writer import SigrokWriter
 
+from _irda_pcap import build_irda_pcap
+
 SIGROK_CLI = shutil.which("sigrok-cli")
+TSHARK = shutil.which("tshark")
 pytestmark = pytest.mark.skipif(SIGROK_CLI is None, reason="sigrok-cli not installed")
+
+CUSTOM_DECODERS_DIR = str(Path(__file__).parent / "custom_decoders")
 
 
 def _write_sr(config: Config, path: Path) -> None:
@@ -992,6 +998,181 @@ def test_spiflash_with_floating_marker_still_roundtrips_through_sigrok(tmp_path)
     pd = "spi:clk=spi0.sclk:mosi=spi0.mosi:miso=spi0.miso:cs=spi0.cs,spiflash:chip=winbond_w25q80dv"
     decoded = _decode(sr_path, pd, None, decoder_id="spiflash")
     assert "Page program (addr 0x001000, 1 bytes): 2f" in decoded
+
+
+def _decode_custom(sr_path: Path, pd_spec: str, annotation_class: str | None, decoder_id: str | None = None) -> list[str]:
+    """Like `_decode()` above, but points sigrok at this repo's own custom
+    decoder directory (`tests/custom_decoders/`) via `SIGROKDECODE_DIR` —
+    confirmed empirically (`sigrok-cli -l 4` lists both the system decoder
+    path and this one) that the env var *adds* to sigrok's search path
+    rather than replacing it, so the system `uart`/`i2c`/etc. decoders used
+    by every other test in this file stay available too. Needed because
+    sigrok upstream has no IrDA decoder at any layer — this project wrote
+    its own (`tests/custom_decoders/irda/pd.py`), the primary oracle
+    validating `IrdaBus`'s SIR+IrLAP framing."""
+
+    decoder_id = decoder_id or pd_spec.split(":")[0]
+    filter_spec = decoder_id if annotation_class is None else f"{decoder_id}={annotation_class}"
+    env = dict(os.environ, SIGROKDECODE_DIR=CUSTOM_DECODERS_DIR)
+    result = subprocess.run(
+        [SIGROK_CLI, "-i", str(sr_path), "-P", pd_spec, "-A", filter_spec],
+        capture_output=True, text=True, timeout=30, env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    return [line.split(": ", 1)[1] for line in result.stdout.splitlines() if ": " in line]
+
+
+def _decode_pcap(pcap_path: Path, fields: list[str]) -> dict[str, str]:
+    """Run `tshark`'s own, independently-implemented `irlap` dissector over
+    a synthetic pcap and return the requested field values for its single
+    packet, as `{field_name: value}` — the second, wholly independent
+    oracle for `IrdaBus` (sigrok has no IrDA decoder to reuse for a first
+    oracle, hence the custom one above; a single self-authored oracle can't
+    catch a bug an author makes identically in both the encoder and its own
+    decoder, so this cross-checks against a real third-party tool's own
+    from-scratch IrLAP implementation instead)."""
+
+    args = [TSHARK, "-r", str(pcap_path), "-T", "fields", "-E", "header=y", "-E", "separator=/t"]
+    for field in fields:
+        args += ["-e", field]
+    result = subprocess.run(args, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.splitlines()
+    assert len(lines) == 2, f"expected exactly 1 header line + 1 data line, got: {lines!r}"
+    header, data = lines[0].split("\t"), lines[1].split("\t")
+    return dict(zip(header, data))
+
+
+def test_irda_roundtrips_through_custom_sigrok_decoder(tmp_path):
+    """sigrok upstream has no IrDA decoder at any layer (confirmed: listed
+    as a 0%-complete future candidate on sigrok's own decoder wiki), so
+    this validates `IrdaBus` against a custom one written for this project
+    (`tests/custom_decoders/irda/pd.py`) instead of a system decoder.
+
+    Needs a *second* `send_i_frame` call to flush the first, same
+    established shape as the PS/2/LIN/DCF77 cases above: unlike those,
+    it isn't a bug in someone else's decoder — it's this repo's own
+    default 2% trailing idle margin (`pad_idle`) not being long enough for
+    *this* custom decoder's own idle-timeout frame-boundary detection
+    (12 SIR bit periods; see `pd.py`'s module docstring for why 12 is the
+    right threshold). A second frame's own start-bit pulse arrives well
+    after that 12-bit-period point (this protocol's own inter-frame gap is
+    16 bit periods, see `irda.py`'s `_INTER_FRAME_GAP_BITS`), so the first
+    frame's idle timeout always fires from the real gap between the two
+    calls, with no dependency on end-of-capture padding at all. The second
+    frame itself is left unflushed (nothing after it), same reasoning as
+    the PS/2 case above.
+    """
+
+    config = Config(
+        samplerate=10_000_000,
+        protocols=[
+            {
+                "id": "ir0", "type": "irda", "params": {"baudrate": 115200},
+                "operations": [
+                    {"op": "send_i_frame", "address": 0x01, "ns": 2, "nr": 3, "info": [0x41, 0x42]},
+                    {"op": "send_i_frame", "address": 0x01, "ns": 3, "nr": 2, "info": [0x00]},
+                ],
+            }
+        ],
+        outputs=[],
+    )
+    sr_path = tmp_path / "irda.sr"
+    _write_sr(config, sr_path)
+
+    pd = "irda:ir=ir0.ir"
+    assert _decode_custom(sr_path, pd, "address") == ["Address: 0x01", "C/R: Command"]
+    assert _decode_custom(sr_path, pd, "frametype") == ["I-frame"]
+    assert _decode_custom(sr_path, pd, "ns") == ["N(S): 2"]
+    assert _decode_custom(sr_path, pd, "nr") == ["N(R): 3"]
+    assert _decode_custom(sr_path, pd, "pf") == ["P: 1"]
+    assert _decode_custom(sr_path, pd, "info") == ["Info[0]: 0x41", "Info[1]: 0x42"]
+    # The decoder verifies FCS itself (reimplementing CRC-16/X-25 from the
+    # public spec, not importing `checksums.crc16_x25`) — an "OK" here
+    # independently confirms the generator's FCS math, not just that some
+    # 2 bytes were transmitted where FCS bytes belong.
+    assert _decode_custom(sr_path, pd, "fcs") == ["FCS: OK"]
+
+
+@pytest.mark.skipif(TSHARK is None, reason="tshark not installed")
+def test_irda_cross_validates_against_wireshark_irlap_dissector(tmp_path):
+    """The second, independent leg of IrDA validation: the same
+    encoded I-frame values (address, N(S)/N(R)/P, info payload) checked two
+    ways — this repo's own `.sr` capture through the custom sigrok decoder
+    above, and a synthetic pcap through `tshark`'s real, wholly separately
+    implemented `irlap` dissector. Semantic values are asserted
+    independently against each tool's own output (never a raw text diff
+    between the two), so this only passes if both a from-scratch decoder
+    and a mature third-party dissector agree with what was actually
+    intended to be encoded.
+
+    The pcap frame carries Address+Control+Information only, no FCS: a
+    real Linux IrDA capture point only ever sees a frame after the
+    receiving hardware/driver already validated and stripped the trailing
+    FCS (the same reason a captured Ethernet frame usually has none
+    either) — confirmed empirically while building `build_irda_pcap`
+    (feeding `tshark` the FCS bytes too makes it misparse them as extra
+    IrLMP payload content instead of recognizing end-of-frame). The `.sr`
+    side still carries a real FCS on the wire, since a real transmitter
+    always sends one — see `build_irda_pcap`'s module docstring.
+    """
+
+    # `info`'s first 2 bytes are a real IrLMP PDU header shape (Destination/
+    # Source LSAP selector, one byte each) since that's what an IrLAP
+    # I-frame's Information field always carries in real traffic, and
+    # `tshark`'s `irlap` dissector always recurses into IrLMP for an
+    # I-frame regardless of content — confirmed empirically: with only 2
+    # info bytes, both get consumed as the IrLMP header and there's nothing
+    # left for a generic `data.data` field to report, so 2 extra trailing
+    # bytes are included here purely so both tools have a payload segment
+    # to independently agree on.
+    address, ns, nr, info = 0x01, 2, 3, [0x01, 0x02, 0xDE, 0xAD]
+
+    config = Config(
+        samplerate=10_000_000,
+        protocols=[
+            {
+                "id": "ir0", "type": "irda", "params": {"baudrate": 115200},
+                "operations": [
+                    {"op": "send_i_frame", "address": address, "ns": ns, "nr": nr, "info": info},
+                    {"op": "send_i_frame", "address": address, "ns": 0, "nr": 0, "info": [0x00]},
+                ],
+            }
+        ],
+        outputs=[],
+    )
+    sr_path = tmp_path / "irda_xval.sr"
+    _write_sr(config, sr_path)
+
+    pd = "irda:ir=ir0.ir"
+    assert _decode_custom(sr_path, pd, "address") == ["Address: 0x01", "C/R: Command"]
+    assert _decode_custom(sr_path, pd, "ns") == ["N(S): 2"]
+    assert _decode_custom(sr_path, pd, "nr") == ["N(R): 3"]
+    assert _decode_custom(sr_path, pd, "info") == [
+        "Info[0]: 0x01", "Info[1]: 0x02", "Info[2]: 0xDE", "Info[3]: 0xAD",
+    ]
+    assert _decode_custom(sr_path, pd, "fcs") == ["FCS: OK"]
+
+    # Independently reconstruct the same logical frame's on-the-wire
+    # Address+Control+Info bytes (no FCS, see the docstring above) for
+    # tshark's side — same field-composition formula `IrdaBus.send_i_frame`
+    # itself uses (C/R in bit 0, N(S)/N(R) either side of the P/F bit),
+    # applied here independently rather than imported from it.
+    addr_byte = (address << 1) | 1  # command=True (the default)
+    control_byte = (ns << 1) | (nr << 5) | 0x10  # final=True (the default) sets the P/F bit
+    frame = bytes([addr_byte, control_byte, *info])
+    pcap_path = tmp_path / "irda_xval.pcap"
+    pcap_path.write_bytes(build_irda_pcap([frame]))
+
+    fields = _decode_pcap(pcap_path, [
+        "irlap.a.address", "irlap.a.cr", "irlap.c.n_s", "irlap.c.n_r", "irlap.c.p", "data.data",
+    ])
+    assert fields["irlap.a.address"] == "0x01"
+    assert fields["irlap.a.cr"] == "True"  # FT_BOOLEAN renders as True/False, not 1/0
+    assert fields["irlap.c.n_s"] == "2"
+    assert fields["irlap.c.n_r"] == "3"
+    assert fields["irlap.c.p"] == "True"
+    assert fields["data.data"] == "dead"
 
 
 def test_spi_with_floating_marker_still_roundtrips_through_sigrok(tmp_path):

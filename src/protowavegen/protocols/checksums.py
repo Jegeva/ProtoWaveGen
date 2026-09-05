@@ -45,6 +45,29 @@ def pec8_smbus(data: list[int]) -> int:
     return crc
 
 
+def crc16_x25(data: list[int]) -> int:
+    """CRC-16/X-25 (a.k.a. CRC-16/IBM-SDLC, CRC-CCITT reflected): polynomial
+    0x1021 (reflected form 0x8408), init 0xFFFF, reflected in/out, final
+    complement (XOR 0xFFFF). This is IrLAP's FCS — verified two ways while
+    building `irda.py`: (1) it reproduces the Linux kernel's own
+    `net/irda/crc.h` `GOOD_FCS` magic-residue value (0xF0B8: running this
+    same algorithm's *un-complemented* running register over a real frame's
+    bytes *including* its own trailing FCS bytes lands exactly there), and
+    (2) a frame built with it round-trips through `tshark`'s real,
+    independently-implemented `irlap` dissector (see
+    `tests/test_sigrok_roundtrip.py`'s IrDA Wireshark cross-validation
+    test). Distinct from `crc16_modbus` above, which uses a different
+    polynomial (0xA001 reflected / 0x8005 normal) and no final XOR — the two
+    are not interchangeable despite both being reflected 16-bit CRCs."""
+
+    crc = 0xFFFF
+    for byte in data:
+        crc ^= byte
+        for _ in range(8):
+            crc = (crc >> 1) ^ 0x8408 if crc & 1 else crc >> 1
+    return (~crc) & 0xFFFF
+
+
 def crc7_sd(data: list[int]) -> int:
     """SD command CRC-7 (polynomial 0x09, MSB-first, not reflected), over
     the 5 command+argument bytes, returned as the final on-the-wire byte
