@@ -33,6 +33,20 @@ class _DataMaskAction(argparse.Action):
         masks.append(values)
 
 
+class _SetOverrideAction(argparse.Action):
+    """Collects every `--set` occurrence, in order, into `field_overrides`
+    — simpler than `_DataOverrideAction` since `--set` is its own single
+    flag (no sibling `--data-hex`/`--data-string`/etc. flags sharing one
+    dest to interleave)."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        overrides = getattr(namespace, "field_overrides", None)
+        if overrides is None:
+            overrides = []
+            setattr(namespace, "field_overrides", overrides)
+        overrides.append(values)
+
+
 class _DataOverrideAction(argparse.Action):
     """Collects every `--data-hex`/`--data-string`/`--data-int`/`--data-bin`
     occurrence, across all four flags, into one shared `data_overrides` list
@@ -121,6 +135,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "'3:h,7:l,10.3:z'). Applied after every --data-* value override resolves; the "
         "target's current datatype must be 'bytes'. Repeatable, same inline-target syntax "
         "as --data-hex.",
+    )
+    parser.add_argument(
+        "--set", action=_SetOverrideAction, dest="field_overrides", metavar="TARGET:FIELD=VALUE",
+        help="Override any scalar (non-payload) operation field, fully targeted — "
+        "protocol_id:op_index:field=value (no auto-detect target, unlike --data-*: a scalar "
+        "field name isn't a closed vocabulary to search over). Value is coerced to int "
+        "(plain or 0x/0b prefixed), float, true/false as bool, else left as a string. "
+        "Rejects any field --data-* already owns (byte-array payload fields) with a pointer "
+        "to the right flag. Repeatable; two --set occurrences targeting the same field conflict.",
     )
     parser.add_argument(
         "--data-target", dest="data_target", default=None,

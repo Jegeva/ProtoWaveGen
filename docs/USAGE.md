@@ -116,7 +116,7 @@ usage: protowavegen [-h] --config CONFIG [--output-dir OUTPUT_DIR]
                     [--data-hex [TARGET:]HEX] [--data-string [TARGET:]TEXT]
                     [--data-int [TARGET:]INTS] [--data-bin [TARGET:]BIN]
                     [--data-bits [TARGET:]BITS] [--data-file [TARGET:]PATH]
-                    [--data-mask [TARGET:]PATH]
+                    [--data-mask [TARGET:]PATH] [--set TARGET:FIELD=VALUE]
                     [--data-target DATA_TARGET] [--save-settings PATH] [-v]
 ```
 
@@ -130,6 +130,7 @@ usage: protowavegen [-h] --config CONFIG [--output-dir OUTPUT_DIR]
 | `--svg-verbose` | Render protocol field descriptions inline on any SVG output. |
 | `--data-hex`, `--data-string`, `--data-int`, `--data-bin`, `--data-bits`, `--data-file` | Override one operation's payload from the command line — see below. Each is repeatable and chainable with the others. |
 | `--data-mask [TARGET:]PATH` | Mark byte/bit positions of an already-resolved `"bytes"`-datatype payload as floating, from a companion mask file — see below. Applied after every `--data-*` value flag. |
+| `--set TARGET:FIELD=VALUE` | Override any *scalar* (non-payload) operation field — an address, an identifier, a clock speed, anything that isn't a byte array — see below. Always fully targeted, repeatable. |
 | `--data-target TARGET` | Fallback `protocol_id:op_index[:field]` target for any `--data-*`/`--data-mask` occurrence with no inline target of its own. |
 | `--save-settings PATH` | Write the fully resolved config (JSON + every CLI override applied) to `PATH` as JSON — directly reloadable via `--config`. |
 | `-v`, `--verbose` | Print a one-line samplerate/protocol-count/output-count summary. |
@@ -253,6 +254,56 @@ override already applied — back out as JSON:
 `resolved.json` is a complete, directly reloadable config
 (`--config resolved.json` reproduces the exact same output) — useful for
 turning a one-off CLI override into a saved, reviewable scenario file.
+
+## Overriding any other field from the CLI
+
+`--data-*` only ever reaches *payload* fields (byte-array parameters like
+I2C's `data` or SPI's `mosi`/`miso`) — a plain scalar like a target
+address, a CAN arbitration ID, a clock speed, or a boolean flag isn't a
+payload and isn't reachable that way. `--set` covers those instead:
+
+```bash
+.venv/bin/python -m protowavegen --config examples/i2c_7bit.json \
+    --set i2c0:0:address=0x50
+```
+
+This re-points operation `0` on protocol `i2c0` (the `write`) at slave
+address `0x50` instead of whatever the JSON says — simulating the same
+transaction against a different device on the bus, without editing the
+file. Syntax is always the full `protocol_id:op_index:field=value` triple
+(unlike `--data-*`, there's no auto-detect or `--data-target` fallback,
+since a scalar field's name isn't a closed set worth searching over) and
+it's repeatable, same as every `--data-*` flag:
+
+```bash
+.venv/bin/python -m protowavegen --config examples/can_basic.json \
+    --set can0:0:identifier=0x321
+```
+
+The value is coerced automatically: a plain or `0x`/`0b`-prefixed integer,
+a float, `true`/`false` as a boolean, or — if none of those match — kept
+as a plain string (needed for fields like DS1307's ISO-8601 `dt` timestamp).
+There's no list/array support; a field that's actually a byte array
+belongs to `--data-*` instead, and `--set` says so if you try:
+
+```
+$ .venv/bin/python -m protowavegen --config examples/i2c_7bit.json --set i2c0:0:data=1
+--set: 'data' is a payload (byte-array) field, not a scalar — use
+--data-hex/--data-string/--data-int/--data-bin/--data-bits/--data-file instead
+```
+
+A typo'd field name fails the same clear way, listing the operation's real
+parameters so you can copy the right one straight from the error:
+
+```
+$ .venv/bin/python -m protowavegen --config examples/i2c_7bit.json --set i2c0:0:addres=80
+--set: I2CBus.write() has no parameter 'addres' (real parameters: ['address', 'data', 'datatype', 'labels', 'nack'])
+```
+
+Some fields still need a real JSON edit either way — adding or removing an
+operation entirely, restructuring a list-shaped field, or changing which
+protocols are in the scenario at all. `--set`/`--data-*` only ever change
+one field's *value* on an operation that's already there.
 
 ## The floating-bit marker system (`l`/`h`/`z`)
 

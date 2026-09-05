@@ -25,7 +25,11 @@ There is no separate build or lint step; `pytest` is the whole check.
 Other CLI flags worth knowing: `--unit-bits N` overrides the SVG unit-bar
 grouping (global or per-protocol-node via a JSON `unit_bits` key); `--svg-verbose`
 turns on inline field-summary text on SVG outputs; `--samplerate` overrides
-the JSON config's samplerate. `main.py --help` lists all of them.
+the JSON config's samplerate; `--set protocol_id:op_index:field=value`
+overrides any scalar (non-payload) operation field — an address, an
+identifier, a clock speed — the way `--data-*` overrides payload byte
+arrays (`config.py::apply_field_override`, `docs/USAGE.md`'s "Overriding
+any other field from the CLI" section). `main.py --help` lists all of them.
 
 The default output directory is `./output` (used whenever `--format` is
 given without an explicit `--output-dir`; see `config.py::resolve_config`).

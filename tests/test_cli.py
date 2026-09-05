@@ -649,3 +649,108 @@ def test_data_mask_end_to_end_produces_floating_annotation(tmp_path):
     assert rc == 0
     svg_text = (out_dir / "capture.svg").read_text()
     assert "floating" in svg_text
+
+
+def test_set_overrides_a_scalar_int_field():
+    from protowavegen.config import resolve_config
+    from protowavegen.main import build_arg_parser
+
+    args = build_arg_parser().parse_args(["--config", "unused.json", "--set", "i2c0:0:address=0x50"])
+    resolved = resolve_config(_i2c_config(), args)
+    ops = resolved.protocols[0]["operations"]
+    assert ops[0]["address"] == 0x50
+    assert ops[1]["address"] == 72  # untouched
+
+
+def test_set_overrides_a_scalar_string_field():
+    from protowavegen.config import resolve_config
+    from protowavegen.main import build_arg_parser
+
+    config = {
+        "samplerate": 4_000_000,
+        "protocols": [
+            {"id": "i2c0", "type": "i2c", "params": {"clock_hz": 100_000}, "operations": []},
+            {
+                "id": "rtc0", "type": "ds1307", "stack_on": "i2c0",
+                "operations": [{"op": "read_datetime", "dt": "2026-03-05T14:30:45"}],
+            },
+        ],
+        "outputs": [],
+    }
+    args = build_arg_parser().parse_args(
+        ["--config", "unused.json", "--set", "rtc0:0:dt=2030-01-01T00:00:00"]
+    )
+    resolved = resolve_config(config, args)
+    assert resolved.protocols[1]["operations"][0]["dt"] == "2030-01-01T00:00:00"
+
+
+def test_set_overrides_a_scalar_bool_field():
+    from protowavegen.config import resolve_config
+    from protowavegen.main import build_arg_parser
+
+    config = {
+        "samplerate": 4_000_000,
+        "protocols": [
+            {"id": "i2c0", "type": "i2c", "params": {"clock_hz": 100_000}, "operations": []},
+            {
+                "id": "ee0", "type": "eeprom_24xx", "stack_on": "i2c0",
+                "operations": [{"op": "read_byte", "word_addr": 0, "value": 1}],
+            },
+        ],
+        "outputs": [],
+    }
+    args = build_arg_parser().parse_args(["--config", "unused.json", "--set", "i2c0:0:nack=true"])
+    resolved = resolve_config(_i2c_config(), args)
+    assert resolved.protocols[0]["operations"][0]["nack"] is True
+
+
+def test_set_unknown_field_raises_and_lists_real_parameters():
+    from protowavegen.config import resolve_config
+    from protowavegen.main import build_arg_parser
+
+    args = build_arg_parser().parse_args(["--config", "unused.json", "--set", "i2c0:0:bogus_field=1"])
+    with pytest.raises(ValueError, match="has no parameter 'bogus_field'"):
+        resolve_config(_i2c_config(), args)
+
+
+def test_set_payload_field_raises_and_points_at_data_flags():
+    from protowavegen.config import resolve_config
+    from protowavegen.main import build_arg_parser
+
+    args = build_arg_parser().parse_args(["--config", "unused.json", "--set", "i2c0:0:data=1"])
+    with pytest.raises(ValueError, match="use --data-hex"):
+        resolve_config(_i2c_config(), args)
+
+
+@pytest.mark.parametrize("target", ["nope:0:address=1", "i2c0:99:address=1", "i2c0:0:address"])
+def test_set_bad_targets_raise_clear_errors(target):
+    from protowavegen.config import resolve_config
+    from protowavegen.main import build_arg_parser
+
+    args = build_arg_parser().parse_args(["--config", "unused.json", "--set", target])
+    with pytest.raises(ValueError):
+        resolve_config(_i2c_config(), args)
+
+
+def test_set_conflicting_overrides_on_same_field_raise():
+    from protowavegen.config import resolve_config
+    from protowavegen.main import build_arg_parser
+
+    args = build_arg_parser().parse_args(
+        ["--config", "unused.json", "--set", "i2c0:0:address=1", "--set", "i2c0:0:address=2"]
+    )
+    with pytest.raises(ValueError, match="conflicting --set"):
+        resolve_config(_i2c_config(), args)
+
+
+def test_set_end_to_end_changes_generated_output(tmp_path):
+    from protowavegen.main import main
+
+    out_baseline = tmp_path / "baseline"
+    out_override = tmp_path / "override"
+    assert main(["--config", "examples/can_basic.json", "--format", "sigrok", "--output-dir", str(out_baseline)]) == 0
+    assert main([
+        "--config", "examples/can_basic.json", "--format", "sigrok", "--output-dir", str(out_override),
+        "--set", "can0:0:identifier=0x321",
+    ]) == 0
+    assert (out_baseline / "capture.sr").read_bytes() != (out_override / "capture.sr").read_bytes()

@@ -180,6 +180,124 @@ def _resolve_data_target(protocols: list[dict], target: str | None) -> tuple[int
     return p_idx, op_index, op_fields[0]
 
 
+def _resolve_set_target(protocols: list[dict], target: str) -> tuple[int, int, str]:
+    """Resolve a `--set protocol_id:op_index:field` string to
+    `(protocol_index, op_index, field)`. Unlike `_resolve_data_target`,
+    always requires the full triple (no auto-detect — a scalar field name
+    isn't a closed vocabulary the way `_PAYLOAD_FIELDS` is, so there's
+    nothing to search over), and validates `field` against the target
+    operation method's real parameter names via `inspect.signature`
+    (same introspection `_datatype_kwarg_name` uses) rather than against
+    `_PAYLOAD_FIELDS` — `--set` is for scalar params, `_PAYLOAD_FIELDS`
+    members are byte-array params `--data-*` already owns."""
+
+    parts = target.split(":")
+    if len(parts) != 3:
+        raise ValueError(f"--set target must be 'protocol_id:op_index:field', got {target!r}")
+    protocol_id, op_index_str, field = parts
+    try:
+        op_index = int(op_index_str)
+    except ValueError:
+        raise ValueError(f"--set: {op_index_str!r} is not a valid operation index") from None
+
+    p_idx = next((i for i, spec in enumerate(protocols) if spec.get("id") == protocol_id), None)
+    if p_idx is None:
+        known = ", ".join(spec.get("id", "?") for spec in protocols)
+        raise ValueError(f"--set: unknown protocol id {protocol_id!r} (known: {known})")
+
+    operations = protocols[p_idx].get("operations", [])
+    if not (0 <= op_index < len(operations)):
+        raise ValueError(
+            f"--set: op_index {op_index} out of range for {protocol_id!r} "
+            f"(has {len(operations)} operation(s))"
+        )
+
+    if field in _PAYLOAD_FIELDS:
+        raise ValueError(
+            f"--set: {field!r} is a payload (byte-array) field, not a scalar — use "
+            f"--data-hex/--data-string/--data-int/--data-bin/--data-bits/--data-file instead"
+        )
+
+    cls = get_protocol_class(protocols[p_idx]["type"])
+    op_name = operations[op_index].get("op", "?")
+    method = getattr(cls, op_name, None)
+    if method is None:
+        raise ValueError(f"--set: {cls.__name__} has no operation {op_name!r}")
+    real_params = [p for p in inspect.signature(method).parameters if p not in ("self", "builder")]
+    if field not in real_params:
+        raise ValueError(
+            f"--set: {cls.__name__}.{op_name}() has no parameter {field!r} "
+            f"(real parameters: {sorted(real_params)})"
+        )
+
+    return p_idx, op_index, field
+
+
+def _parse_set_value(raw: str) -> object:
+    """Best-effort scalar type coercion for a `--set ...=value` value:
+    int (plain decimal, or `0x`/`0b` prefixed, matching `_parse_data_int`'s
+    single-token convention) first, then float, then `true`/`false`
+    (case-insensitive) as bool, else the raw string as-is — needed for
+    e.g. DS1307's ISO-8601 `dt` field. No list/array support — that's
+    still `--data-*` or a JSON edit."""
+
+    try:
+        return int(raw, 0)
+    except ValueError:
+        pass
+    try:
+        return float(raw)
+    except ValueError:
+        pass
+    if raw.lower() == "true":
+        return True
+    if raw.lower() == "false":
+        return False
+    return raw
+
+
+def apply_field_override(protocols: list[dict], args) -> list[dict]:
+    """Apply every `--set protocol_id:op_index:field=value` override, in
+    command-line order. Each occurrence must fully specify its own target
+    (see `_resolve_set_target`) — there's no `--data-target`-style fallback
+    since a scalar field name isn't a closed vocabulary to auto-detect
+    over. Two overrides targeting the same field is a conflict, not a
+    silent overwrite, same as `apply_data_override`. No-op if no `--set`
+    flag was given."""
+
+    overrides = getattr(args, "field_overrides", None) or []
+    if not overrides:
+        return protocols
+
+    protocols = list(protocols)
+    touched: dict[tuple[int, int, str], str] = {}
+
+    for raw in overrides:
+        target, sep, value_str = raw.partition("=")
+        if not sep:
+            raise ValueError(f"--set: expected 'protocol_id:op_index:field=value', got {raw!r}")
+        p_idx, op_idx, field = _resolve_set_target(protocols, target)
+
+        key = (p_idx, op_idx, field)
+        this_override = f"--set {raw!r}"
+        if key in touched:
+            raise ValueError(
+                f"conflicting --set overrides target the same field "
+                f"{protocols[p_idx]['id']}:{op_idx}:{field}: {touched[key]} and {this_override}"
+            )
+        touched[key] = this_override
+
+        spec = dict(protocols[p_idx])
+        operations = list(spec["operations"])
+        op = dict(operations[op_idx])
+        op[field] = _parse_set_value(value_str)
+        operations[op_idx] = op
+        spec["operations"] = operations
+        protocols[p_idx] = spec
+
+    return protocols
+
+
 _MASK_RESOLUTIONS = {"l", "L", "h", "H", "z", "Z"}
 
 
@@ -390,11 +508,14 @@ def resolve_config(json_cfg: dict, args) -> Config:
     all-or-nothing override, since format selection and per-format options
     can't both come from a flat CLI flag); with no `--format`, `--output-dir`
     alone just relocates the JSON-declared outputs into that directory.
-    `--format` with no `--output-dir` defaults to `./output`. Payload data
-    resolves in two passes: `apply_data_override` applies every
-    `--data-*` value flag first, then `apply_data_mask` applies every
+    `--format` with no `--output-dir` defaults to `./output`. Overrides
+    resolve in three passes: `apply_field_override` applies every `--set`
+    scalar-field override first, then `apply_data_override` applies every
+    `--data-*` payload value flag, then `apply_data_mask` applies every
     `--data-mask` on top — a mask requires its target to have already
-    resolved to datatype `"bytes"`.
+    resolved to datatype `"bytes"`. `--set` and `--data-*` can never target
+    the same field (`--set` rejects any field in `_PAYLOAD_FIELDS`), so the
+    three passes can't conflict with each other.
     """
 
     samplerate = args.samplerate if args.samplerate is not None else json_cfg.get("samplerate")
@@ -402,6 +523,7 @@ def resolve_config(json_cfg: dict, args) -> Config:
         raise ValueError("samplerate must be set via the JSON config's 'samplerate' or --samplerate")
 
     protocols = json_cfg.get("protocols", [])
+    protocols = apply_field_override(protocols, args)
     protocols = apply_data_override(protocols, args)
     protocols = apply_data_mask(protocols, args)
     outputs = list(json_cfg.get("outputs", []))
