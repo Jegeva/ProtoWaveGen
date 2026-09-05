@@ -218,6 +218,70 @@ Operations: `configure(mask)`, `set_polarity(mask)`, `set_output(bits)`,
 }
 ```
 
+### PCA9571 — `type: "pca9571"`
+
+`pca9571.py`. NXP PCA9571 8-bit I2C GPIO expander, fixed 7-bit address
+`0x25` (no address-strap pins on real hardware, and no `address` param —
+sigrok's own `pca9571` decoder hardcodes this same address).
+
+Operations: `set_outputs(mask)`, `read_outputs(mask)`. Unlike TCA6408A,
+there's no register pointer at all — a single byte sets/reads all 8
+outputs directly. Neither takes `datatype`.
+
+```json
+{
+  "samplerate": 4000000,
+  "protocols": [
+    { "id": "i2c0", "type": "i2c", "params": { "clock_hz": 100000, "addr_bits": 7 }, "operations": [] },
+    {
+      "id": "gpio0", "type": "pca9571", "stack_on": "i2c0",
+      "operations": [
+        { "op": "set_outputs", "mask": 60 },
+        { "op": "read_outputs", "mask": 60 }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/pca9571_basic.svg" },
+    { "type": "sigrok", "path": "output/pca9571_basic.sr" },
+    { "type": "vcd", "path": "output/pca9571_basic.vcd" }
+  ]
+}
+```
+
+### RTC-8564 / PCF8563 — `type: "rtc8564"`
+
+`rtc8564.py`. Epson RTC-8564 / NXP PCF8563 realtime clock family, fixed
+7-bit address `0x51` (no address-strap pins on real hardware).
+
+Operations: `read_datetime(dt, voltage_low=False, century=False)`,
+`write_datetime(dt, voltage_low=False, century=False)` — `dt` is an
+ISO-8601 string or a Python `datetime`, same as `ds1307.py`. Unlike
+DS1307, the date/time register block starts at `0x02` (seconds), not
+`0x00` — registers `0x00`/`0x01` are control bits, not modeled.
+`voltage_low`/`century` set the seconds/month registers' bit 7 flags.
+None take `datatype`.
+
+```json
+{
+  "samplerate": 4000000,
+  "protocols": [
+    { "id": "i2c0", "type": "i2c", "params": { "clock_hz": 100000, "addr_bits": 7 }, "operations": [] },
+    {
+      "id": "rtc0", "type": "rtc8564", "stack_on": "i2c0",
+      "operations": [
+        { "op": "read_datetime", "dt": "2026-03-05T14:30:45" }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/rtc8564_basic.svg" },
+    { "type": "sigrok", "path": "output/rtc8564_basic.sr" },
+    { "type": "vcd", "path": "output/rtc8564_basic.vcd" }
+  ]
+}
+```
+
 ### MLX90614 — `type: "mlx90614"`
 
 `mlx90614.py`. Melexis MLX90614 infrared thermometer, default address

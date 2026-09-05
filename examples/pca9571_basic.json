@@ -1,0 +1,18 @@
+{
+  "samplerate": 4000000,
+  "protocols": [
+    { "id": "i2c0", "type": "i2c", "params": { "clock_hz": 100000, "addr_bits": 7 }, "operations": [] },
+    {
+      "id": "gpio0", "type": "pca9571", "stack_on": "i2c0",
+      "operations": [
+        { "op": "set_outputs", "mask": 60 },
+        { "op": "read_outputs", "mask": 60 }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/pca9571_basic.svg" },
+    { "type": "sigrok", "path": "output/pca9571_basic.sr" },
+    { "type": "vcd", "path": "output/pca9571_basic.vcd" }
+  ]
+}

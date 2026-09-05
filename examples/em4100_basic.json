@@ -1,0 +1,18 @@
+{
+  "samplerate": 1000000,
+  "protocols": [
+    {
+      "id": "tag0", "type": "em4100",
+      "operations": [
+        { "op": "transmit", "version": 18, "unique_id": 878082202 },
+        { "op": "transmit", "version": 18, "unique_id": 878082202 },
+        { "op": "transmit", "version": 18, "unique_id": 878082202 }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/em4100_basic.svg" },
+    { "type": "sigrok", "path": "output/em4100_basic.sr" },
+    { "type": "vcd", "path": "output/em4100_basic.vcd" }
+  ]
+}

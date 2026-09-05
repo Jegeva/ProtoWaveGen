@@ -1,0 +1,17 @@
+{
+  "samplerate": 4000000,
+  "protocols": [
+    { "id": "i2c0", "type": "i2c", "params": { "clock_hz": 100000, "addr_bits": 7 }, "operations": [] },
+    {
+      "id": "rtc0", "type": "rtc8564", "stack_on": "i2c0",
+      "operations": [
+        { "op": "read_datetime", "dt": "2026-03-05T14:30:45" }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/rtc8564_basic.svg" },
+    { "type": "sigrok", "path": "output/rtc8564_basic.sr" },
+    { "type": "vcd", "path": "output/rtc8564_basic.vcd" }
+  ]
+}

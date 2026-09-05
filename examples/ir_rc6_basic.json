@@ -1,0 +1,16 @@
+{
+  "samplerate": 1000000,
+  "protocols": [
+    {
+      "id": "rc60", "type": "ir_rc6",
+      "operations": [
+        { "op": "send", "address": 18, "command": 52, "toggle": true }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/ir_rc6_basic.svg" },
+    { "type": "sigrok", "path": "output/ir_rc6_basic.sr" },
+    { "type": "vcd", "path": "output/ir_rc6_basic.vcd" }
+  ]
+}

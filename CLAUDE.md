@@ -100,6 +100,36 @@ timing code:
   (reading back `0xABCD` decoded as a precisely 1-bit-shifted `0x579b`).
   Fixed by bringing `clk` back to idle-low before dropping CS, and moving
   `do`'s change to the rising edge while `di`'s stays on the falling edge.
+- `I2CBus._start_condition()` produced a spurious STOP-shaped edge right
+  before a *repeated* START (`write_then_read()`'s switch from write to
+  read, and 10-bit addressing's own repeated-START prelude): called right
+  after an ACK'd byte, SCL is already high and SDA is already held low —
+  the code's "make sure SDA is idle-high first" step then raised SDA
+  *while SCL was still high*, which is itself a real STOP condition,
+  before immediately doing the intended START edge. Found via sigrok's
+  `rtc8564` decoder (adopted this session), which tracks real START vs.
+  repeated-START vs. STOP and never reached its read-phase state because
+  of the phantom STOP in between. Fixed by detecting that specific entry
+  state (SCL high, SDA low) and bringing SCL low first so SDA can go
+  idle-high safely, matching real I2C repeated-START electrical timing.
+  Verified zero regressions across the full suite (the buggy path was
+  already exercised by every existing `write_then_read()` caller —
+  `ds1307`, `tca6408a`, `lm75`, `eeprom_24xx` — none of which happened to
+  assert exact absolute sample counts sensitive to it).
+- **Known follow-up, not yet fixed**: `I2CBus._stop_condition()` has the
+  same class of bug in the opposite direction — called right after a
+  *NACK'd* byte (SDA already high, the default ending for any read via
+  `nack_last=True`), its own "make sure SDA is idle-low first" step
+  produces a spurious START-shaped edge immediately before the real STOP
+  edge. Confirmed via the same `rtc8564` round-trip test: the base `i2c`
+  decoder's event stream ends in a bogus "Start repeat" instead of
+  "Stop", so any decoder gating a summary annotation on a real STOP
+  (`rtc8564` does; most per-byte-annotating decoders like `pca9571` don't
+  care and are unaffected) never fires it. Left unfixed deliberately —
+  unlike the START-side fix above, this one changes *every* transaction's
+  final edge shape/timing in the entire codebase, not just the repeated-
+  START path, so it needs its own dedicated fix-and-regression pass
+  rather than folding into an unrelated batch of protocol additions.
 
 Some of sigrok's own decoders have quirks/limitations confirmed unrelated
 to us — found by reading their source under
@@ -171,6 +201,46 @@ out to be real bugs on our side once actually investigated, not sigrok's.
   before emitting (see the `clear_first` sort key). Any future change to
   how `changes[t]` is built or emitted needs to preserve that ordering
   guarantee, not just get the *set* of events right.
+- **A biphase/Manchester bit's "1 vs 0" polarity convention isn't
+  universal — verify per decoder, don't assume a working convention
+  transfers.** `dali.py`'s `_manchester_bit` and RC-5's own biphase
+  encoding agree (`bit=1` = high-to-low at the bit's midpoint), but
+  RC-6's leader is a distinctive 6-half-bit mark + 2-half-bit space, not a
+  plain biphase bit — its own start bit must produce a falling edge
+  exactly at the leader's 2-half-bit mark to be recognized at all, which
+  only happens with the *opposite* sense from RC-5's convention. Found by
+  empirically probing a generated capture against `sigrok-cli` and
+  reading the exact edge/delta classification logic in `ir_rc6/pd.py`
+  when the obvious first attempt (reusing RC-5's convention verbatim)
+  produced zero annotations — see `ir_rc6.py`'s docstring for the fix.
+  Also needed a 20-half-bit trailing idle gap before the decoder would
+  emit its address/command summary at all (it only closes out a field
+  once it sees a long enough gap with no further edge). Two back-to-back
+  IR frames with zero gap between them also need a small mandatory idle
+  period (`_ir_pulse.ensure_idle_gap`) — a rise and fall landing on the
+  *same* sample is silently misread by edge-based decoders as no edge
+  having happened at all.
+- **A Manchester decoder's bit-pairing state can bootstrap out of phase,
+  and only settle after a real frame boundary — send several frames, not
+  one, before trusting a round-trip decode.** `em4100.py`'s decoder
+  (`em4100/pd.py`) computes each bit from `oldpin ^ polarity` using
+  whatever edge it happens to see *first*, with no concept of "waiting
+  for a clean sync point" the way `ir_rc5`'s state machine does — so a
+  single isolated frame, or even two back-to-back, can decode with every
+  row shifted out of phase (confirmed by porting the decoder's exact
+  edge-pairing algorithm into a standalone Python script and comparing
+  its output against the exact bits generated, byte for byte). Three or
+  more `transmit()` calls back-to-back let its pairing state settle by
+  the first frame boundary, after which every subsequent frame decodes
+  cleanly. Also needed `polarity=active-low` explicitly on the decoder
+  invocation — its own default is `active-high`, decoding every bit
+  inverted despite using the same Manchester convention `dali.py`
+  already established. Lesson: when a decoder's own state machine has no
+  explicit re-sync/bootstrap guarantee, don't assume a single frame is
+  enough to validate a round-trip — and when a convention that worked for
+  one Manchester-based decoder produces garbage on another, re-derive the
+  polarity/bootstrap assumptions from that decoder's own source rather
+  than assuming the earlier convention transfers.
 
 ## Architecture
 
@@ -232,7 +302,7 @@ Everything flows through one pipeline, orchestrated by
   `"datatype"` field: `"bytes"` (default, the original JSON int-array
   form), `"text"` (a JSON string, UTF-8-encoded), or `"hex"` (a hex-digit
   string decoded via `bytes.fromhex`). Normalization happens via
-  `decode_payload()` (`base.py`), called at the top of each JSON-facing
+  `decode_payload()` (`payload.py`), called at the top of each JSON-facing
   operation method — see `examples/uart_basic.json` (`"datatype": "text"`)
   and `examples/sd_spi_basic.json` (`"datatype": "hex"`) for the two forms
   in use; every other example still uses the plain int-array default. The
@@ -246,27 +316,37 @@ Everything flows through one pipeline, orchestrated by
   it's unambiguous; otherwise `--data-target protocol_id:op_index[:field]`
   is required, and the resulting `ValueError` lists every candidate in that
   exact syntax so it can be copied straight into `--data-target`.
-- 27 protocols are implemented (one file each under `protocols/`, one
-  `<name>_basic.json` each under `examples/`). Six are `TransportProtocol`s
-  with their own physical-layer bit timing: **UART** (`uart.py`), **I2C**
-  (`i2c.py`, 7/10-bit addressing, `write_then_read()` for the
-  set-pointer-then-repeated-START-read idiom nearly every I2C device uses),
-  **SPI/QSPI/OctoSPI** (`spi.py`, `width` param selects which), **1-Wire**
-  (`onewire.py`), **CAN** (`can.py`, real CRC-15 + bit-stuffing), **DALI**
-  (`dali.py`, Manchester-encoded), plus three more standalone transports for
-  buses that don't fit any of those: **Wiegand** (`wiegand.py`, two
-  open-collector pulse lines, no clock), **NES gamepad** (`nes_gamepad.py`,
-  independently-timed latch/clock, deliberately *not* built on `SpiBus`),
-  and **Microwire** (`microwire.py`, active-high CS, no CPOL/CPHA modes).
-  Everything else is a `StackedProtocol` wrapping one of those — an
-  application-layer device/protocol adding no new bit-timing of its own:
-  **LIN** and **Modbus RTU** (real CRC16, `checksums.py`) on `UartTransport`;
+- 38 protocols are implemented (one file each under `protocols/`, one
+  `<name>_basic.json` each under `examples/`). Seventeen are
+  `TransportProtocol`s with their own physical-layer bit timing:
+  **UART** (`uart.py`), **I2C** (`i2c.py`, 7/10-bit addressing,
+  `write_then_read()` for the set-pointer-then-repeated-START-read idiom
+  nearly every I2C device uses), **SPI/QSPI/OctoSPI** (`spi.py`, `width`
+  param selects which), **1-Wire** (`onewire.py`), **CAN** (`can.py`, real
+  CRC-15 + bit-stuffing), **DALI** (`dali.py`, Manchester-encoded),
+  **PS/2** (`ps2.py`), plus three more standalone transports for buses
+  that don't fit any of those: **Wiegand** (`wiegand.py`, two
+  open-collector pulse lines, no clock), **NES gamepad**
+  (`nes_gamepad.py`, independently-timed latch/clock, deliberately *not*
+  built on `SpiBus`), and **Microwire** (`microwire.py`, active-high CS,
+  no CPOL/CPHA modes); plus seven newer standalone transports: **IR RC-5,
+  IR NEC, IR RC-6** (`ir_rc5.py`/`ir_nec.py`/`ir_rc6.py`, sharing the
+  small `_ir_pulse.py` helper — biphase and pulse-distance IR
+  remote-control encodings), **TLC5620** (`tlc5620.py`, a shift-register
+  quad DAC), **EM4100** (`em4100.py`, Manchester-encoded 125kHz RFID),
+  **AM230x** (`am230x.py`, a DHTxx-family humidity/temperature sensor,
+  pulse-width-timed like 1-Wire but with no ROM addressing), and **DCF77**
+  (`dcf77.py`, a 1-bit-per-second longwave time signal). Everything else
+  is a `StackedProtocol` wrapping one of those — an application-layer
+  device/protocol adding no new bit-timing of its own: **LIN** and
+  **Modbus RTU** (real CRC16, `checksums.py`) on `UartTransport`;
   **DMX512** on `UartTransport` too (break+bytes, same shape as LIN);
-  **LM75, 24xx EEPROM, DS1307, TCA6408A, MLX90614 (real SMBus PEC), Nunchuk,
-  ADXL345** on `I2CBus`; **JEDEC CFI, MAX7219, SD-card-SPI-mode (real
-  CRC-7), 7-segment (`seven_segment.py`)** on `SpiBus`; **DS2408, DS243x,
-  DS28EA00** (1-Wire CRC-8, `checksums.py` + `onewire_rom.py`'s shared
-  Skip-ROM/Match-ROM prelude) on `OneWireBus`; and **93xx EEPROM**
+  **LM75, 24xx EEPROM, DS1307, TCA6408A, MLX90614 (real SMBus PEC),
+  Nunchuk, ADXL345, PCA9571, RTC-8564** on `I2CBus`; **JEDEC CFI, MAX7219,
+  SD-card-SPI-mode (real CRC-7), 7-segment (`seven_segment.py`), SPI
+  flash (`spiflash.py`)** on `SpiBus`; **DS2408, DS243x, DS28EA00**
+  (1-Wire CRC-8, `checksums.py` + `onewire_rom.py`'s shared Skip-ROM/
+  Match-ROM prelude) on `OneWireBus`; and **93xx EEPROM**
   (`microwire_93xx.py`) on `MicrowireBus`. `protocols/base.py`'s module
   docstring-level pattern (real signals + a docstring describing the
   intended algorithm, `generate()`/methods raising `NotImplementedError`
@@ -282,8 +362,8 @@ Everything flows through one pipeline, orchestrated by
   `.end` is filled in at block exit, so a stacked protocol can annotate the
   exact range its transport just produced.
 - `Annotation` is the single, deliberately generic metadata mechanism —
-  `track` (a string namespace: `"driver"`, `"field"`, `"bitorder"`, `"unit"`,
-  `"error"`, or a new one) + `label` + a sample range + arbitrary `data`.
+  `track` (a string namespace: `"driver"`, `"field"`, `"bitorder"`,
+  `"unit"`, or a new one) + `label` + a sample range + arbitrary `data`.
   There's no per-concern subclassing; every requirement (who's driving a
   shared line, MSB/LSB order, a decoded field, a framing-unit boundary) is
   just another track.

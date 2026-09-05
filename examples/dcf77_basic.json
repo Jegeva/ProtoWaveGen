@@ -1,0 +1,17 @@
+{
+  "samplerate": 1000,
+  "protocols": [
+    {
+      "id": "dcf0", "type": "dcf77",
+      "operations": [
+        { "op": "send_minute", "minute": 30, "hour": 14, "day": 5, "weekday": 4, "month": 3, "year": 26 },
+        { "op": "send_minute", "minute": 31, "hour": 14, "day": 5, "weekday": 4, "month": 3, "year": 26 }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/dcf77_basic.svg" },
+    { "type": "sigrok", "path": "output/dcf77_basic.sr" },
+    { "type": "vcd", "path": "output/dcf77_basic.vcd" }
+  ]
+}

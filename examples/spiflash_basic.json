@@ -1,0 +1,24 @@
+{
+  "samplerate": 10000000,
+  "protocols": [
+    { "id": "spi0", "type": "spi", "params": { "clock_hz": 1000000, "width": 1, "mode": 0 }, "operations": [] },
+    {
+      "id": "flash0", "type": "spiflash", "stack_on": "spi0",
+      "operations": [
+        { "op": "write_enable" },
+        { "op": "page_program", "address": 4096, "data": [222, 173, 190, 239] },
+        { "op": "write_enable" },
+        { "op": "sector_erase", "address": 4096 },
+        { "op": "read_status", "value": 0 },
+        { "op": "read", "address": 4096, "data": [222, 173, 190, 239] },
+        { "op": "write_enable" },
+        { "op": "chip_erase" }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/spiflash_basic.svg" },
+    { "type": "sigrok", "path": "output/spiflash_basic.sr" },
+    { "type": "vcd", "path": "output/spiflash_basic.vcd" }
+  ]
+}

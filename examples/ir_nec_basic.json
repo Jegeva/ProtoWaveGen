@@ -1,0 +1,17 @@
+{
+  "samplerate": 1000000,
+  "protocols": [
+    {
+      "id": "nec0", "type": "ir_nec",
+      "operations": [
+        { "op": "send", "address": 0, "command": 12 },
+        { "op": "send_repeat" }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/ir_nec_basic.svg" },
+    { "type": "sigrok", "path": "output/ir_nec_basic.sr" },
+    { "type": "vcd", "path": "output/ir_nec_basic.vcd" }
+  ]
+}

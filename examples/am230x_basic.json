@@ -1,0 +1,16 @@
+{
+  "samplerate": 1000000,
+  "protocols": [
+    {
+      "id": "sensor0", "type": "am230x",
+      "operations": [
+        { "op": "send_reading", "humidity": 65.2, "temperature": 23.4 }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/am230x_basic.svg" },
+    { "type": "sigrok", "path": "output/am230x_basic.sr" },
+    { "type": "vcd", "path": "output/am230x_basic.vcd" }
+  ]
+}

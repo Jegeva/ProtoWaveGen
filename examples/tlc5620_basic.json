@@ -1,0 +1,17 @@
+{
+  "samplerate": 10000000,
+  "protocols": [
+    {
+      "id": "dac0", "type": "tlc5620", "params": { "clock_hz": 1000000 },
+      "operations": [
+        { "op": "set_channel", "channel": 0, "gain": 1, "value": 200 },
+        { "op": "set_channel", "channel": 2, "gain": 2, "value": 64 }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/tlc5620_basic.svg" },
+    { "type": "sigrok", "path": "output/tlc5620_basic.sr" },
+    { "type": "vcd", "path": "output/tlc5620_basic.vcd" }
+  ]
+}

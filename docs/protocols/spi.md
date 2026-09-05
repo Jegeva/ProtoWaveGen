@@ -179,6 +179,52 @@ demonstrating the `"hex"` datatype.
 }
 ```
 
+### SPI flash/EEPROM — `type: "spiflash"`
+
+`spiflash.py`. Generic SPI-NOR flash (`xx25` family, matching sigrok's own
+`spiflash` decoder — decode with e.g. `spiflash:chip=winbond_w25q80dv`).
+
+Operations: `write_enable()`, `write_disable()` (no `datatype`),
+`read_status(value)`, `write_status(value)`, `read(address, data,
+datatype="bytes")`, `fast_read(address, data, datatype="bytes")` (like
+`read` plus one dummy byte), `page_program(address, data,
+datatype="bytes")` (the first *write-direction*/MOSI-side floating-marker
+case in this repo — same `render_as_bin` technique other protocols use on
+MISO), `sector_erase(address)` (must be 4096-byte aligned), `chip_erase()`.
+No WIP-bit polling and no write-enable-latch state tracking — this is a
+synthesis tool, not a hardware timing simulator (sigrok's own decoder only
+*warns*, doesn't reject, when `WREN` looks missing before a write/erase).
+For manufacturer-ID queries, stack a separate `jedec_cfi` node on the same
+`SpiBus` instance instead — nothing prevents two stacked protocols sharing
+one transport.
+
+```json
+{
+  "samplerate": 10000000,
+  "protocols": [
+    { "id": "spi0", "type": "spi", "params": { "clock_hz": 1000000, "width": 1, "mode": 0 }, "operations": [] },
+    {
+      "id": "flash0", "type": "spiflash", "stack_on": "spi0",
+      "operations": [
+        { "op": "write_enable" },
+        { "op": "page_program", "address": 4096, "data": [222, 173, 190, 239] },
+        { "op": "write_enable" },
+        { "op": "sector_erase", "address": 4096 },
+        { "op": "read_status", "value": 0 },
+        { "op": "read", "address": 4096, "data": [222, 173, 190, 239] },
+        { "op": "write_enable" },
+        { "op": "chip_erase" }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/spiflash_basic.svg" },
+    { "type": "sigrok", "path": "output/spiflash_basic.sr" },
+    { "type": "vcd", "path": "output/spiflash_basic.vcd" }
+  ]
+}
+```
+
 ### 7-segment shift register — `type: "seven_segment"`
 
 `seven_segment.py`. Generic 74HC595-style serial-in/parallel-out shift

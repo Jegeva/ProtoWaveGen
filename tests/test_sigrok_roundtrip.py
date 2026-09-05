@@ -127,6 +127,67 @@ def test_i2c_with_floating_marker_still_roundtrips_through_sigrok(tmp_path):
     assert _decode(sr_path, pd, "data-read") == ["Data read: 00"]
 
 
+def test_pca9571_roundtrips_through_sigroks_pca9571_decoder(tmp_path):
+    config = Config(
+        samplerate=4_000_000,
+        protocols=[
+            {"id": "i2c0", "type": "i2c", "params": {"clock_hz": 100_000, "addr_bits": 7}, "operations": []},
+            {
+                "id": "gpio0", "type": "pca9571", "stack_on": "i2c0",
+                "operations": [
+                    {"op": "set_outputs", "mask": 0x3C},
+                    {"op": "read_outputs", "mask": 0x3C},
+                ],
+            },
+        ],
+        outputs=[],
+    )
+    sr_path = tmp_path / "pca9571.sr"
+    _write_sr(config, sr_path)
+
+    decoded = _decode(sr_path, "i2c:scl=i2c0.scl:sda=i2c0.sda,pca9571", None, decoder_id="pca9571")
+    assert decoded == ["Outputs set: 3C", "Outputs read: 3C"]
+
+
+def test_rtc8564_roundtrips_through_sigroks_rtc8564_decoder(tmp_path):
+    """sigrok's `rtc8564` decoder only prints its "Read/Write date/time"
+    summary line once it sees a real STOP condition — `I2CBus`'s
+    `_stop_condition()` has its own pre-existing edge-shape bug (distinct
+    from the repeated-START bug fixed in `i2c.py` this session) where a
+    transaction ending in a NACK'd byte (the default for the last byte of
+    any read, including this one) produces a spurious START-shaped edge
+    right before the real STOP — confirmed via this exact capture, where
+    the base `i2c` decoder's own event stream ends in a bogus "Start
+    repeat" instead of "Stop". Left as a follow-up (out of scope for this
+    batch — fixing `_stop_condition()` correctly touches every existing
+    transaction's edge count, unlike the narrowly-scoped `_start_condition`
+    fix). This test asserts the decoder's per-register annotations
+    instead, which decode correctly regardless."""
+
+    config = Config(
+        samplerate=4_000_000,
+        protocols=[
+            {"id": "i2c0", "type": "i2c", "params": {"clock_hz": 100_000, "addr_bits": 7}, "operations": []},
+            {
+                "id": "rtc0", "type": "rtc8564", "stack_on": "i2c0",
+                "operations": [{"op": "read_datetime", "dt": "2026-03-05T14:30:45"}],
+            },
+        ],
+        outputs=[],
+    )
+    sr_path = tmp_path / "rtc8564.sr"
+    _write_sr(config, sr_path)
+
+    pd = "i2c:scl=i2c0.scl:sda=i2c0.sda,rtc8564"
+    decoded = _decode(sr_path, pd, None, decoder_id="rtc8564")
+    assert "Second: 45" in decoded
+    assert "Minute: 30" in decoded
+    assert "Hour: 14" in decoded
+    assert "Day: 5" in decoded
+    assert "Month: 3" in decoded
+    assert "Year: 26" in decoded
+
+
 def test_lin_frame_bytes_roundtrip_through_sigroks_uart_decoder(tmp_path):
     config = Config(
         samplerate=1_000_000,
@@ -685,6 +746,176 @@ def test_lin_roundtrips_through_sigroks_lin_decoder(tmp_path):
     ]
 
 
+def test_ir_rc5_roundtrips_through_sigroks_ir_rc5_decoder(tmp_path):
+    config = Config(
+        samplerate=1_000_000,
+        protocols=[
+            {
+                "id": "rc0", "type": "ir_rc5",
+                "operations": [{"op": "send", "address": 5, "command": 12, "toggle": False}],
+            }
+        ],
+        outputs=[],
+    )
+    sr_path = tmp_path / "ir_rc5.sr"
+    _write_sr(config, sr_path)
+
+    pd = "ir_rc5:ir=rc0.ir"
+    assert _decode(sr_path, pd, "address") == ["Address: 5 (Video cassette recorder 1)"]
+    assert _decode(sr_path, pd, "command") == ["Command: 12 (Standby)"]
+    assert _decode(sr_path, pd, "togglebit-0") == ["Togglebit: 0"]
+
+
+def test_ir_nec_roundtrips_through_sigroks_ir_nec_decoder(tmp_path):
+    config = Config(
+        samplerate=1_000_000,
+        protocols=[
+            {
+                "id": "nec0", "type": "ir_nec",
+                "operations": [
+                    {"op": "send", "address": 0, "command": 12},
+                    {"op": "send_repeat"},
+                ],
+            }
+        ],
+        outputs=[],
+    )
+    sr_path = tmp_path / "ir_nec.sr"
+    _write_sr(config, sr_path)
+
+    pd = "ir_nec:ir=nec0.ir"
+    assert _decode(sr_path, pd, "addr") == ["Address: 0x00"]
+    assert _decode(sr_path, pd, "addr-inv") == ["Address#: 0xFF"]
+    assert _decode(sr_path, pd, "cmd") == ["Command: 0x0C"]
+    assert _decode(sr_path, pd, "cmd-inv") == ["Command#: 0xF3"]
+    assert _decode(sr_path, pd, "repeat-code") == ["Repeat code"]
+
+
+def test_ir_rc6_roundtrips_through_sigroks_ir_rc6_decoder(tmp_path):
+    config = Config(
+        samplerate=1_000_000,
+        protocols=[
+            {
+                "id": "rc60", "type": "ir_rc6",
+                "operations": [{"op": "send", "address": 0x12, "command": 0x34, "toggle": True}],
+            }
+        ],
+        outputs=[],
+    )
+    sr_path = tmp_path / "ir_rc6.sr"
+    _write_sr(config, sr_path)
+
+    pd = "ir_rc6:ir=rc60.ir"
+    assert _decode(sr_path, pd, "address") == ["Address: 12"]
+    assert _decode(sr_path, pd, "command") == ["Data: 34"]
+    assert _decode(sr_path, pd, "togglebit") == ["Toggle: 1"]
+    assert _decode(sr_path, pd, "field") == ["Field: 0"]
+
+
+def test_tlc5620_roundtrips_through_sigroks_tlc5620_decoder(tmp_path):
+    config = Config(
+        samplerate=10_000_000,
+        protocols=[
+            {
+                "id": "dac0", "type": "tlc5620", "params": {"clock_hz": 1_000_000},
+                "operations": [{"op": "set_channel", "channel": 0, "gain": 1, "value": 200}],
+            }
+        ],
+        outputs=[],
+    )
+    sr_path = tmp_path / "tlc5620.sr"
+    _write_sr(config, sr_path)
+
+    pd = "tlc5620:clk=dac0.clk:data=dac0.data:load=dac0.load:ldac=dac0.ldac"
+    assert _decode(sr_path, pd, "dac-select") == ["DAC select: DACA"]
+    assert _decode(sr_path, pd, "gain") == ["Gain: x1"]
+    assert _decode(sr_path, pd, "value") == ["DAC value: 200"]
+
+
+def test_em4100_roundtrips_through_sigroks_em4100_decoder(tmp_path):
+    """Needs 3 back-to-back `transmit()` calls, not just 1 or 2 — sigrok's
+    `em4100` decoder bootstraps its Manchester bit-pairing state off
+    whatever edge it happens to see first, so early frames can decode out
+    of phase; by the first frame boundary its pairing state has settled,
+    after which every subsequent frame decodes cleanly (see em4100.py's
+    docstring, confirmed empirically). Also needs `polarity=active-low`
+    explicitly — the decoder's own default is `active-high`."""
+
+    config = Config(
+        samplerate=1_000_000,
+        protocols=[
+            {
+                "id": "tag0", "type": "em4100",
+                "operations": [
+                    {"op": "transmit", "version": 0x12, "unique_id": 0x3456789A},
+                    {"op": "transmit", "version": 0x12, "unique_id": 0x3456789A},
+                    {"op": "transmit", "version": 0x12, "unique_id": 0x3456789A},
+                ],
+            }
+        ],
+        outputs=[],
+    )
+    sr_path = tmp_path / "em4100.sr"
+    _write_sr(config, sr_path)
+
+    pd = "em4100:data=tag0.data:polarity=active-low"
+    assert _decode(sr_path, pd, "tag") == ["Tag: 123456789A"]
+
+
+def test_am230x_roundtrips_through_sigroks_am230x_decoder(tmp_path):
+    config = Config(
+        samplerate=1_000_000,
+        protocols=[
+            {
+                "id": "sensor0", "type": "am230x",
+                "operations": [{"op": "send_reading", "humidity": 65.2, "temperature": 23.4}],
+            }
+        ],
+        outputs=[],
+    )
+    sr_path = tmp_path / "am230x.sr"
+    _write_sr(config, sr_path)
+
+    pd = "am230x:sda=sensor0.sda"
+    assert _decode(sr_path, pd, "humidity") == ["Humidity: 65.2 %"]
+    assert _decode(sr_path, pd, "temperature") == ["Temperature: 23.4 °C"]
+    assert _decode(sr_path, pd, "checksum") == ["Checksum: OK"]
+
+
+def test_dcf77_roundtrips_through_sigroks_dcf77_decoder(tmp_path):
+    """sigrok's `dcf77` decoder only starts annotating real fields once it
+    sees the ~2000ms new-minute gap (bit 59 is never transmitted) — two
+    back-to-back `send_minute()` calls give it that gap, same
+    repeat-for-a-clean-decode shape as this repo's PS/2/LIN/EM4100
+    round-trip cases."""
+
+    config = Config(
+        samplerate=1000,
+        protocols=[
+            {
+                "id": "dcf0", "type": "dcf77",
+                "operations": [
+                    {"op": "send_minute", "minute": 30, "hour": 14, "day": 5, "weekday": 4, "month": 3, "year": 26},
+                    {"op": "send_minute", "minute": 31, "hour": 14, "day": 5, "weekday": 4, "month": 3, "year": 26},
+                ],
+            }
+        ],
+        outputs=[],
+    )
+    sr_path = tmp_path / "dcf77.sr"
+    _write_sr(config, sr_path)
+
+    pd = "dcf77:data=dcf0.data"
+    assert _decode(sr_path, pd, "minute") == ["Minutes: 30", "Minutes: 31"]
+    assert _decode(sr_path, pd, "minute-parity") == ["Minute parity: OK", "Minute parity: OK"]
+    assert _decode(sr_path, pd, "hour") == ["Hours: 14", "Hours: 14"]
+    assert _decode(sr_path, pd, "hour-parity") == ["Hour parity: OK", "Hour parity: OK"]
+    assert _decode(sr_path, pd, "day") == ["Day: 5", "Day: 5"]
+    assert _decode(sr_path, pd, "month") == ["Month: 3 (March)", "Month: 3 (March)"]
+    assert _decode(sr_path, pd, "year") == ["Year: 26", "Year: 26"]
+    assert _decode(sr_path, pd, "date-parity") == ["Date parity: OK", "Date parity: OK"]
+
+
 def test_spi_roundtrips_through_sigroks_spi_decoder(tmp_path):
     config = Config(
         samplerate=8_000_000,
@@ -703,6 +934,64 @@ def test_spi_roundtrips_through_sigroks_spi_decoder(tmp_path):
     pd = "spi:clk=spi0.sclk:mosi=spi0.mosi:miso=spi0.miso:cs=spi0.cs"
     assert _decode(sr_path, pd, "mosi-data") == ["9B", "01", "02"]
     assert _decode(sr_path, pd, "miso-data") == ["00", "00", "C8"]
+
+
+def test_spiflash_roundtrips_through_sigroks_spiflash_decoder(tmp_path):
+    config = Config(
+        samplerate=10_000_000,
+        protocols=[
+            {"id": "spi0", "type": "spi", "params": {"clock_hz": 1_000_000, "width": 1, "mode": 0}, "operations": []},
+            {
+                "id": "flash0", "type": "spiflash", "stack_on": "spi0",
+                "operations": [
+                    {"op": "write_enable"},
+                    {"op": "page_program", "address": 0x001000, "data": [0xDE, 0xAD, 0xBE, 0xEF]},
+                    {"op": "write_enable"},
+                    {"op": "sector_erase", "address": 0x001000},
+                    {"op": "read", "address": 0x001000, "data": [0xDE, 0xAD, 0xBE, 0xEF]},
+                    {"op": "write_enable"},
+                    {"op": "chip_erase"},
+                ],
+            },
+        ],
+        outputs=[],
+    )
+    sr_path = tmp_path / "spiflash.sr"
+    _write_sr(config, sr_path)
+
+    pd = "spi:clk=spi0.sclk:mosi=spi0.mosi:miso=spi0.miso:cs=spi0.cs,spiflash:chip=winbond_w25q80dv"
+    decoded = _decode(sr_path, pd, None, decoder_id="spiflash")
+    assert "Page program (addr 0x001000, 4 bytes): de ad be ef" in decoded
+    assert "Erase sector 4096 (0x001000)" in decoded
+    assert "Read data (addr 0x001000, 4 bytes): de ad be ef" in decoded
+    assert not any("Warning" in line for line in decoded)
+
+
+def test_spiflash_with_floating_marker_still_roundtrips_through_sigrok(tmp_path):
+    """Same floating-marker-resolves-to-concrete-bits guarantee as
+    earlier in this file, now for spiflash's page_program — the first
+    write-direction (MOSI-side) floating-marker case in this codebase."""
+
+    config = Config(
+        samplerate=10_000_000,
+        protocols=[
+            {"id": "spi0", "type": "spi", "params": {"clock_hz": 1_000_000, "width": 1, "mode": 0}, "operations": []},
+            {
+                "id": "flash0", "type": "spiflash", "stack_on": "spi0",
+                "operations": [
+                    {"op": "write_enable"},
+                    {"op": "page_program", "address": 0x001000, "data": "2h", "datatype": "hex"},
+                ],
+            },
+        ],
+        outputs=[],
+    )
+    sr_path = tmp_path / "spiflash_floating.sr"
+    _write_sr(config, sr_path)
+
+    pd = "spi:clk=spi0.sclk:mosi=spi0.mosi:miso=spi0.miso:cs=spi0.cs,spiflash:chip=winbond_w25q80dv"
+    decoded = _decode(sr_path, pd, None, decoder_id="spiflash")
+    assert "Page program (addr 0x001000, 1 bytes): 2f" in decoded
 
 
 def test_spi_with_floating_marker_still_roundtrips_through_sigrok(tmp_path):

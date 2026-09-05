@@ -102,6 +102,25 @@ class I2CBus(TransportProtocol):
                 builder.set_level(scl, 1)
                 self._scl_driver.set("pullup")
                 builder.advance(shb)
+            elif builder.level_of(sda) == 0:
+                # Repeated START called right after an ACK'd byte: SCL is
+                # already high and SDA is still held low by that ACK bit.
+                # Raising SDA directly here (SCL high, SDA low->high) would
+                # itself be a real STOP condition — confirmed via sigrok's
+                # `rtc8564` decoder, which tracks I2C's own START/START-
+                # REPEAT/STOP classification and saw a spurious STOP right
+                # before every repeated-START `write_then_read()` produces,
+                # so it never reached its "read" state. Bring SCL low first
+                # so SDA can go idle-high safely before the real START edge.
+                builder.set_level(scl, 0)
+                self._scl_driver.set("master")
+                builder.advance(shb)
+                builder.set_level(sda, 1)
+                self._sda_driver.set("pullup")
+                builder.advance(shb)
+                builder.set_level(scl, 1)
+                self._scl_driver.set("pullup")
+                builder.advance(shb)
             if builder.level_of(sda) == 0:
                 builder.set_level(sda, 1)
                 self._sda_driver.set("pullup")
