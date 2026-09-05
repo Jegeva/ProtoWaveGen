@@ -2,99 +2,144 @@
 
 Back to [usage overview](../USAGE.md).
 
-`type: "i2c"` — `I2CBus`, `protocols/i2c.py`. Open-drain SCL/SDA
-(`SignalKind.TRISTATE`): level 1 is always the pull-up holding the line
-released, never a device driving high; level 0 is always some device
-actively sinking it. Both signals are TRISTATE, so `z`/`Z` floating markers
-(see [the datatype/floating-marker guide](../USAGE.md#the-floating-bit-marker-system-lhz))
-resolve automatically.
+## What this is
 
-## Constructor params
+I2C (Inter-Integrated Circuit) is the two-wire bus (SCL clock, SDA data)
+used all over embedded electronics to talk to sensors, EEPROMs, real-time
+clocks, GPIO expanders, and dozens of other small chips. This page
+generates realistic I2C timing diagrams — a master writing/reading a
+generic device, plus nine specific real-world devices stacked on top of
+the same bus — without any real hardware. The output is a diagram (SVG)
+and/or a capture file (`.sr`/`.vcd`) you can open in PulseView, sigrok-cli,
+or GTKWave as if a logic analyzer had actually probed the bus.
 
-```json
-"params": { "clock_hz": 100000, "addr_bits": 7 }
-```
+Both signals are open-drain (`SignalKind.TRISTATE`): a logic-1 level in
+the diagram always means "the pull-up resistor is holding the line high,
+nobody's driving it," never a chip actively driving high. This matters if
+you ever hand-write a floating-bit payload — see
+[the datatype/floating-marker guide](../USAGE.md#the-floating-bit-marker-system-lhz).
 
-- `clock_hz` (required) — bus clock speed.
-- `addr_bits` — `7` (default) or `10`. 10-bit addressing uses the standard
-  two-header-byte encoding with a repeated START to switch direction on a
-  read.
-
-## Operations
-
-- **`write`** — `address`, `data`, `datatype="bytes"`, `nack=False`,
-  `labels=None`. Full floating-marker support on `data`.
-- **`read`** — `address`, `data`, `datatype="bytes"`, `nack_last=True`,
-  `labels=None`. `data` is the synthesized response the slave sends back
-  (this tool generates diagrams, it doesn't sense a real device).
-- **`write_then_read`** — `address`, `write_data`, `read_data`,
-  `datatype="bytes"` (applies to both fields by default),
-  `write_data_datatype=None`/`read_data_datatype=None` (override `datatype`
-  independently for just one field — e.g. a concrete register-pointer
-  `write_data` alongside a floating-marked `read_data`), `nack_last=True`,
-  `write_labels=None`, `read_labels=None`. The common
-  "set a register pointer, then read it back" idiom, as one continuous
-  frame (write phase, repeated START, read phase) instead of two separate
-  transactions.
-
-`address` is always a plain int — no `datatype` on it.
-
-## Example — `examples/i2c_7bit.json`
-
-```json
-{
-  "samplerate": 4000000,
-  "protocols": [
-    {
-      "id": "i2c0",
-      "type": "i2c",
-      "params": { "clock_hz": 100000, "addr_bits": 7 },
-      "operations": [
-        { "op": "write", "address": 72, "data": [1, 42] },
-        { "op": "read", "address": 72, "data": [0, 150] }
-      ]
-    }
-  ],
-  "outputs": [
-    { "type": "svg", "path": "output/i2c_7bit.svg" },
-    { "type": "sigrok", "path": "output/i2c_7bit.sr" },
-    { "type": "vcd", "path": "output/i2c_7bit.vcd" }
-  ]
-}
-```
+## Quick start
 
 ```bash
 .venv/bin/python -m protowavegen --config examples/i2c_7bit.json
 ```
 
-Override the write's payload from the CLI, chained with a floating-marker
-override on the read (SDA auto-resolves `z` since it's TRISTATE):
+This runs `examples/i2c_7bit.json` (shown in full below) and writes
+`output/i2c_7bit.svg`/`.sr`/`.vcd` — a master writing two bytes to device
+address `72` (`0x48`), then reading two bytes back from the same address:
+
+![Baseline I2C capture: write then read at address 0x48](images/i2c/baseline.svg)
+
+## What you can customize
+
+Without touching the JSON at all, the CLI can change:
+- **The address being talked to** (`address` on `write`/`read`/
+  `write_then_read`) — simulate the same transaction against a different
+  device on the bus, via `--set`.
+- **The bytes sent or expected back** (`data`, or `write_data`/`read_data`
+  on `write_then_read`) — via `--data-hex`/`--data-string`/`--data-int`/etc.
+- **The bus clock speed** (`clock_hz`) — this one's a constructor param,
+  not an operation field, so it needs a JSON edit (see below).
+
+## Recipes — customizing via the CLI
+
+### Changing the payload
+
+Override the write's data and the read's expected reply in one invocation
+(each flag targets a different operation via its inline
+`protocol_id:op_index:` prefix — see
+[Chaining multiple overrides](../USAGE.md#chaining-multiple-overrides-in-one-invocation)):
 
 ```bash
-.venv/bin/python -m protowavegen --config examples/i2c_7bit.json \
-    --data-bin    "i2c0:0:data:0b0000000100101010" \
-    --data-string "i2c0:1:data:\xzztoto"
+.venv/bin/python -m protowavegen --config examples/i2c_7bit.json --format svg \
+    --data-int "i2c0:0:1,99"
 ```
+
+This changes the write's payload from `[1, 42]` to `[1, 99]` — useful for
+checking how a diagram looks with a different register value without
+hand-editing the file:
+
+![I2C capture with the write's data byte changed to 0x63](images/i2c/data_override.svg)
+
+### Changing the target address
+
+`address` is a plain field on the `write`/`read` operations themselves
+(not a constructor param, for the raw I2C bus — every transaction can
+target a different device), so `--set` reaches it directly:
+
+```bash
+.venv/bin/python -m protowavegen --config examples/i2c_7bit.json --format svg \
+    --set "i2c0:0:address=0x50" --set "i2c0:1:address=0x50"
+```
+
+Both operations now target `0x50` instead of `0x48` — simulating the exact
+same read/write sequence against a second device on the bus:
+
+![I2C capture re-targeted at address 0x50](images/i2c/address_override.svg)
+
+### When you still need to edit the JSON
+
+`addr_bits`/`clock_hz` are constructor `params`, not per-operation fields
+— there's no operation to target, so `--set`/`--data-*` can't reach them.
+Switch to 10-bit addressing by editing the config directly:
+
+```diff
+-      "params": { "clock_hz": 100000, "addr_bits": 7 },
++      "params": { "clock_hz": 100000, "addr_bits": 10 },
+```
+
+then re-run the same command. The same applies to adding/removing
+operations entirely, or changing which protocols are in the scenario.
 
 ---
 
 ## Stacked devices
 
 Every device below needs `"stack_on": "<i2c node id>"` and must be
-declared after that I2C node in the `protocols` list.
+declared after that I2C node in the `protocols` list. Several of them
+have a **fixed or constructor-level address** (baked into `params`, not
+an operation field) — for those, changing the address means editing the
+JSON, the same way `addr_bits` does above; only the raw I2C bus's own
+`write`/`read`/`write_then_read` take `address` as a live per-operation
+field.
 
 ### LM75 — `type: "lm75"`
 
-`lm75.py`. National LM75-style temperature sensor, 7-bit address
-`0x48`-`0x4F`. Caches its own register pointer internally, so a second
-`read_temperature()` in a row skips the redundant pointer-write — visible
-in the example below (only the first call's frame includes the
-pointer-set phase).
+National LM75-style temperature sensor, 7-bit address `0x48`-`0x4F`. It
+caches its own register pointer internally, so a second
+`read_temperature()` in a row skips the redundant pointer-write.
 
-`params`: `address` (default `0x48`).
+```bash
+.venv/bin/python -m protowavegen --config examples/lm75_basic.json
+```
 
-Operations: `read_temperature(celsius)`, `write_config(byte)`,
-`write_threshold(register, celsius)`. None take `datatype`.
+![LM75 baseline capture](images/lm75/baseline.svg)
+
+The temperature readings (`celsius`) are real operation fields, so
+`--set` changes them directly:
+
+```bash
+.venv/bin/python -m protowavegen --config examples/lm75_basic.json --format svg \
+    --set "lm75_0:0:celsius=30.0" --set "lm75_0:1:celsius=31.5"
+```
+
+![LM75 capture with both readings overridden](images/lm75/celsius_override.svg)
+
+The device's *address*, though, is a constructor param
+(`"params": {"address": 72}`) — there's no operation to `--set` it on, so
+changing which LM75 you're simulating means editing the JSON:
+
+```diff
+-      "id": "lm75_0", "type": "lm75", "stack_on": "i2c0", "params": { "address": 72 },
++      "id": "lm75_0", "type": "lm75", "stack_on": "i2c0", "params": { "address": 73 },
+```
+
+![LM75 capture at address 0x49 after a JSON edit](images/lm75/address_json_edit.svg)
+
+`params`: `address` (default `0x48`). Operations: `read_temperature(celsius)`,
+`write_config(byte)`, `write_threshold(register, celsius)`. None take
+`datatype`.
 
 ```json
 {
@@ -117,17 +162,30 @@ Operations: `read_temperature(celsius)`, `write_config(byte)`,
 }
 ```
 
-```bash
-.venv/bin/python -m protowavegen --config examples/lm75_basic.json
-```
-
 ### 24xx EEPROM — `type: "eeprom_24xx"`
 
-`eeprom_24xx.py`. Generic 24xx-series I2C EEPROM; `addr_width` (1 or 2)
-picks byte- vs. word-addressing.
+Generic 24xx-series I2C EEPROM; `addr_width` (1 or 2) picks byte- vs.
+word-addressing.
 
-`params`: `address` (default `0x50`), `addr_width` (default `1`),
-`page_size` (default `16`).
+```bash
+.venv/bin/python -m protowavegen --config examples/eeprom_24xx_basic.json
+```
+
+![24xx EEPROM baseline capture](images/eeprom_24xx/baseline.svg)
+
+`read_sequential`'s `values` is a real payload field, so it takes the
+usual `--data-*` treatment:
+
+```bash
+.venv/bin/python -m protowavegen --config examples/eeprom_24xx_basic.json --format svg \
+    --data-int "ee0:1:99,100,101"
+```
+
+![24xx EEPROM capture with the read-back bytes changed](images/eeprom_24xx/data_override.svg)
+
+`params`: `address` (default `0x50`, constructor-level — same JSON-edit
+caveat as LM75's above), `addr_width` (default `1`), `page_size`
+(default `16`).
 
 Operations: `write_page(word_addr, values)` (plain list, no `datatype`),
 `write_byte(word_addr, value)`, `read_sequential(word_addr, values, datatype="bytes")`
@@ -158,8 +216,17 @@ bytes), `read_byte(word_addr, value)`.
 
 ### DS1307 — `type: "ds1307"`
 
-`ds1307.py`. Dallas DS1307 realtime clock, fixed 7-bit address `0x68` (no
-`address` param — it's not configurable on this part).
+Dallas DS1307 realtime clock, fixed 7-bit address `0x68` (no `address`
+param at all — not configurable on real hardware, so there's nothing to
+override, JSON or CLI, for the address).
+
+`read_datetime`/`write_datetime`'s `dt` is a real (string) operation
+field, reachable with `--set` since it's a scalar, not a byte array:
+
+```bash
+.venv/bin/python -m protowavegen --config examples/ds1307_basic.json --format svg \
+    --set "rtc0:0:dt=2030-01-01T00:00:00"
+```
 
 Operations: `read_datetime(dt)`, `write_datetime(dt)` — `dt` is an
 ISO-8601 string (JSON has no native datetime type) or a Python
@@ -188,8 +255,13 @@ take `datatype`.
 
 ### TCA6408A — `type: "tca6408a"`
 
-`tca6408a.py`. TI TCA6408A 8-bit I2C GPIO expander, 7-bit address
-`0x20`-`0x27`.
+TI TCA6408A 8-bit I2C GPIO expander, 7-bit address `0x20`-`0x27`
+(constructor-level, JSON-edit-only to change — same caveat as LM75's
+above).
+
+`configure`/`set_polarity`/`set_output`/`read_inputs`'s `mask`/`bits`/
+`value` fields are all plain scalars, so `--set` reaches any of them,
+e.g. `--set "gpio0:1:bits=0xAA"`.
 
 `params`: `address` (default `0x20`).
 
@@ -220,13 +292,15 @@ Operations: `configure(mask)`, `set_polarity(mask)`, `set_output(bits)`,
 
 ### PCA9571 — `type: "pca9571"`
 
-`pca9571.py`. NXP PCA9571 8-bit I2C GPIO expander, fixed 7-bit address
-`0x25` (no address-strap pins on real hardware, and no `address` param —
-sigrok's own `pca9571` decoder hardcodes this same address).
+NXP PCA9571 8-bit I2C GPIO expander, fixed 7-bit address `0x25` (no
+address-strap pins on real hardware, and no `address` param at all —
+sigrok's own `pca9571` decoder hardcodes this same address, so there's
+nothing to override for it either way).
 
 Operations: `set_outputs(mask)`, `read_outputs(mask)`. Unlike TCA6408A,
 there's no register pointer at all — a single byte sets/reads all 8
-outputs directly. Neither takes `datatype`.
+outputs directly. Neither takes `datatype`; both `mask` fields are plain
+scalars reachable via `--set`.
 
 ```json
 {
@@ -251,16 +325,16 @@ outputs directly. Neither takes `datatype`.
 
 ### RTC-8564 / PCF8563 — `type: "rtc8564"`
 
-`rtc8564.py`. Epson RTC-8564 / NXP PCF8563 realtime clock family, fixed
-7-bit address `0x51` (no address-strap pins on real hardware).
+Epson RTC-8564 / NXP PCF8563 realtime clock family, fixed 7-bit address
+`0x51` (no address-strap pins on real hardware, no `address` param).
 
 Operations: `read_datetime(dt, voltage_low=False, century=False)`,
 `write_datetime(dt, voltage_low=False, century=False)` — `dt` is an
 ISO-8601 string or a Python `datetime`, same as `ds1307.py`. Unlike
 DS1307, the date/time register block starts at `0x02` (seconds), not
 `0x00` — registers `0x00`/`0x01` are control bits, not modeled.
-`voltage_low`/`century` set the seconds/month registers' bit 7 flags.
-None take `datatype`.
+`voltage_low`/`century` set the seconds/month registers' bit 7 flags. All
+four fields are plain scalars, reachable via `--set`.
 
 ```json
 {
@@ -284,12 +358,15 @@ None take `datatype`.
 
 ### MLX90614 — `type: "mlx90614"`
 
-`mlx90614.py`. Melexis MLX90614 infrared thermometer, default address
-`0x5A`. Every read transaction ends with a real SMBus PEC-8 checksum byte
-(`checksums.pec8_smbus`), computed over the actual bus bytes.
+Melexis MLX90614 infrared thermometer, default address `0x5A`
+(constructor-level). Every read transaction ends with a real SMBus PEC-8
+checksum byte (`checksums.pec8_smbus`), computed over the actual bus
+bytes — so an overridden `celsius` value still produces a correct
+checksum, not a stale one.
 
 Operations: `read_ambient_temperature(celsius)`,
-`read_object_temperature(celsius, source=1)`. None take `datatype`.
+`read_object_temperature(celsius, source=1)`. None take `datatype`; both
+`celsius` fields (and `source`) are plain scalars, reachable via `--set`.
 
 ```json
 {
@@ -314,11 +391,14 @@ Operations: `read_ambient_temperature(celsius)`,
 
 ### Nunchuk — `type: "nunchuk"`
 
-`nunchuk.py`. Nintendo Wii Nunchuk, fixed 7-bit address `0x52`.
+Nintendo Wii Nunchuk, fixed 7-bit address `0x52` (no `address` param).
 
 Operations: `init()` (two fixed writes disabling the classic encryption
 scheme), `poll(joystick, accel, button_z=False, button_c=False)`. None
-take `datatype`.
+take `datatype`. `joystick`/`accel` are plain lists (not `--data-*`
+payload fields — those flags are for byte-array *datatype-controlled*
+fields specifically), so changing them means a JSON edit; `button_z`/
+`button_c` are plain scalars, reachable via `--set`.
 
 ```json
 {
@@ -343,13 +423,15 @@ take `datatype`.
 
 ### ADXL345 — `type: "adxl345"`
 
-`adxl345.py`. Analog Devices ADXL345 3-axis accelerometer, I2C mode,
-7-bit address `0x1D` (or `0x53`, depending on the `ALT ADDRESS` pin).
+Analog Devices ADXL345 3-axis accelerometer, I2C mode, 7-bit address
+`0x1D` (or `0x53`, depending on the `ALT ADDRESS` pin — constructor-level,
+JSON-edit-only).
 
 `params`: `address` (default `0x1D`).
 
 Operations: `enable_measurement()`, `read_acceleration(x, y, z)`. None
-take `datatype`.
+take `datatype`; `x`/`y`/`z` are plain scalars, reachable via `--set`
+(e.g. `--set "acc0:1:z=500"` to simulate a different tilt reading).
 
 ```json
 {
