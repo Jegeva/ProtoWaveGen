@@ -1,0 +1,20 @@
+{
+  "samplerate": 192000000,
+  "protocols": [
+    { "id": "usb0", "type": "usb", "operations": [] },
+    {
+      "id": "usb_cdc0", "type": "usb_cdc", "stack_on": "usb0",
+      "operations": [
+        { "op": "set_line_coding", "address": 5, "baud": 115200, "data_bits": 8, "stop_bits": 0, "parity": 0 },
+        { "op": "set_control_line_state", "address": 5, "dtr": true, "rts": true },
+        { "op": "send_data", "address": 5, "data": "Hello", "datatype": "text" },
+        { "op": "send_data", "address": 5, "data": "World", "datatype": "text" }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/usb_cdc_basic.svg" },
+    { "type": "sigrok", "path": "output/usb_cdc_basic.sr" },
+    { "type": "vcd", "path": "output/usb_cdc_basic.vcd" }
+  ]
+}

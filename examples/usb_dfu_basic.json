@@ -1,0 +1,24 @@
+{
+  "samplerate": 192000000,
+  "protocols": [
+    { "id": "usb0", "type": "usb", "operations": [] },
+    {
+      "id": "usb_dfu0",
+      "type": "usb_dfu",
+      "stack_on": "usb0",
+      "operations": [
+        { "op": "dnload", "address": 5, "block_num": 0, "data": [222, 173, 190, 239] },
+        { "op": "get_status", "address": 5, "status": 0, "state": 4 },
+        { "op": "get_status", "address": 5, "status": 0, "state": 5 },
+        { "op": "dnload", "address": 5, "block_num": 0, "data": [] },
+        { "op": "get_status", "address": 5, "status": 0, "state": 7 },
+        { "op": "get_status", "address": 5, "status": 0, "state": 2 }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/usb_dfu_basic.svg" },
+    { "type": "sigrok", "path": "output/usb_dfu_basic.sr" },
+    { "type": "vcd", "path": "output/usb_dfu_basic.vcd" }
+  ]
+}

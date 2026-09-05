@@ -424,7 +424,23 @@ class UsbBus(TransportProtocol):
         current_role: str | None = None
         role_start = start
         for state, role in zip(states, stuffed_roles):
-            if role != current_role:
+            # A "stuff" bit is transparent to role bookkeeping: it's not a
+            # role of its own, just an inserted bit-stuffing artifact that
+            # can land strictly *inside* a single field/byte's own bit run
+            # (e.g. any payload byte whose LSB-first bits include an
+            # internal run of 6+ consecutive 1s, such as 0x7F or 0xFF --
+            # common, not exotic). Treating "stuff" as a real role
+            # transition would flush the interrupted role's annotation
+            # twice (once before the stuff bit, once after, both with the
+            # same full byte/field value) instead of once with the
+            # correct combined span -- confirmed empirically while adding
+            # UsbHid, whose synthesized descriptor bytes were the first
+            # payload in this codebase to contain such a run. Skipping the
+            # comparison for "stuff" keeps `current_role`/`role_start`
+            # pointing at the interrupted role until a real different role
+            # follows, so it flushes exactly once, with a span that simply
+            # (correctly) includes the stuff bit's own sample duration.
+            if role != "stuff" and role != current_role:
                 self._annotate_role(
                     builder, dp, dm, current_role, role_start, builder.cursor,
                     pid_name, summary_label, summary_data, data_bytes,

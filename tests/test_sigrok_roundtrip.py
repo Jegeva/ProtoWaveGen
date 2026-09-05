@@ -1277,3 +1277,207 @@ def test_i3c_roundtrips_through_vendored_i3c_decoder(tmp_path):
     assert "Data write: AD" in addr_data
     assert "Data read: BE" in addr_data
     assert "Data read: EF" in addr_data
+
+
+def test_usb_cdc_roundtrips_through_custom_sigrok_decoder(tmp_path):
+    """No mainline sigrok decoder exists for USB CDC/ACM (only
+    usb_packet/usb_request/usb_signalling/usb_power_delivery ship), so
+    this validates UsbCdcAcm against a custom decoder written for this
+    project (tests/custom_decoders/usb_cdc/pd.py), stacked on top of
+    sigrok's own real usb_signalling -> usb_packet decoders -- single-
+    oracle tier, the same class of validation as DALI's ballast replies
+    per CLAUDE.md's oracle-tier writeup, and not worth a second
+    (Wireshark-style) oracle for a narrow USB application-layer protocol
+    like this one.
+    """
+
+    config = Config(
+        samplerate=192_000_000,
+        protocols=[
+            {"id": "usb0", "type": "usb", "operations": []},
+            {
+                "id": "usb_cdc0", "type": "usb_cdc", "stack_on": "usb0",
+                "operations": [
+                    {
+                        "op": "set_line_coding", "address": 5,
+                        "baud": 115200, "data_bits": 8, "stop_bits": 0, "parity": 0,
+                    },
+                    {"op": "set_control_line_state", "address": 5, "dtr": True, "rts": True},
+                    {"op": "send_data", "address": 5, "data": "Hi", "datatype": "text"},
+                ],
+            },
+        ],
+        outputs=[],
+    )
+    sr_path = tmp_path / "usb_cdc.sr"
+    _write_sr(config, sr_path)
+
+    pd = "usb_signalling:dp=usb0.dp:dm=usb0.dm:signalling=full-speed,usb_packet,usb_cdc"
+    assert _decode_custom(sr_path, pd, "linecoding", decoder_id="usb_cdc") == [
+        "baud=115200 format=1 parity=None bits=8"
+    ]
+    assert _decode_custom(sr_path, pd, "controlline", decoder_id="usb_cdc") == ["DTR=1 RTS=1"]
+    assert _decode_custom(sr_path, pd, "data", decoder_id="usb_cdc") == ["data: 0x48 'H' 0x69 'i'"]
+    assert _decode_custom(sr_path, pd, "warnings", decoder_id="usb_cdc") == []
+
+
+def test_usb_dfu_roundtrips_through_custom_sigrok_decoder(tmp_path):
+    """No mainline sigrok decoder exists for USB DFU (confirmed: only
+    usb_packet/usb_request/usb_signalling/usb_power_delivery ship for USB),
+    so this validates UsbDfu against a custom decoder written for this
+    project (tests/custom_decoders/usb_dfu/pd.py), stacked on sigrok's own
+    real usb_packet decoder exactly like usb_request is -- single-oracle
+    tier, same class of validation as rtc8564/PCA9571's self-authored
+    oracles, deliberately not cross-checked against a second tool (a
+    Wireshark USB dissector needs full enumeration-sequence state that
+    was already researched and ruled out as not worth it for this
+    project's app-layer USB protocols).
+    """
+
+    config = Config(
+        samplerate=192_000_000,
+        protocols=[
+            {"id": "usb0", "type": "usb", "operations": []},
+            {
+                "id": "dfu0", "type": "usb_dfu", "stack_on": "usb0",
+                "operations": [
+                    {"op": "dnload", "address": 5, "block_num": 0, "data": [0xDE, 0xAD, 0xBE, 0xEF]},
+                    {"op": "get_status", "address": 5, "status": 0, "state": 4},
+                    {"op": "get_status", "address": 5, "status": 0, "state": 5},
+                    {"op": "dnload", "address": 5, "block_num": 0, "data": []},
+                    {"op": "get_status", "address": 5, "status": 0, "state": 7},
+                    {"op": "get_status", "address": 5, "status": 0, "state": 2},
+                ],
+            },
+        ],
+        outputs=[],
+    )
+    sr_path = tmp_path / "usb_dfu.sr"
+    _write_sr(config, sr_path)
+
+    pd = "usb_signalling:dp=usb0.dp:dm=usb0.dm:signalling=full-speed,usb_packet,usb_dfu"
+    dnload = _decode_custom(sr_path, pd, "dnload", decoder_id="usb_dfu")
+    assert dnload == ["DNLOAD: block=0 len=4", "DNLOAD: block=0 len=0"]
+
+    getstatus = _decode_custom(sr_path, pd, "getstatus", decoder_id="usb_dfu")
+    assert getstatus == ["GETSTATUS (interface=0)"] * 4
+
+    responses = _decode_custom(sr_path, pd, "status-response", decoder_id="usb_dfu")
+    assert responses == [
+        "Status: 0 State: dfuDNBUSY",
+        "Status: 0 State: dfuDNLOAD-IDLE",
+        "Status: 0 State: dfuMANIFEST",
+        "Status: 0 State: dfuIDLE",
+    ]
+
+    assert _decode_custom(sr_path, pd, "warnings", decoder_id="usb_dfu") == []
+
+
+def test_usb_hid_roundtrips_through_custom_sigrok_decoder(tmp_path):
+    """No mainline sigrok decoder exists for USB HID (confirmed: only
+    usb_packet/usb_request/usb_signalling/usb_power_delivery ship under
+    /usr/share/libsigrokdecode/decoders/), so this validates `UsbHid`
+    against a custom decoder written for this project
+    (tests/custom_decoders/usb_hid/pd.py), stacked on sigrok's own mainline
+    usb_signalling+usb_packet decoders -- the same electrical/framing
+    layers `UsbBus` itself composes. Exercises both GET_DESCRIPTOR request
+    shapes (HID and REPORT) and two interrupt-IN reports (covering the
+    DATA0/DATA1 toggle)."""
+
+    config = Config(
+        samplerate=192_000_000,
+        protocols=[
+            {"id": "usb0", "type": "usb", "operations": []},
+            {
+                "id": "usb_hid0", "type": "usb_hid", "stack_on": "usb0",
+                "operations": [
+                    {"op": "get_hid_descriptor", "address": 5, "endpoint": 0},
+                    {"op": "get_report_descriptor", "address": 5, "endpoint": 0},
+                    {"op": "send_report", "buttons": 1, "x": 10, "y": -5, "address": 5, "endpoint": 1},
+                    {"op": "send_report", "buttons": 0, "x": -20, "y": 20, "address": 5, "endpoint": 1},
+                ],
+            },
+        ],
+        outputs=[],
+    )
+    sr_path = tmp_path / "usb_hid.sr"
+    _write_sr(config, sr_path)
+
+    pd = "usb_signalling:dp=usb0.dp:dm=usb0.dm:signalling=full-speed,usb_packet,usb_hid"
+    descriptors = _decode_custom(sr_path, pd, "descriptor", decoder_id="usb_hid")
+    assert any(d.startswith("GET_DESCRIPTOR(HID):") for d in descriptors)
+    assert any(d.startswith("GET_DESCRIPTOR(REPORT):") for d in descriptors)
+    report_desc_line = next(d for d in descriptors if d.startswith("GET_DESCRIPTOR(REPORT):"))
+    # Spot-check a few real REPORT_DESCRIPTOR bytes appear verbatim, decoded
+    # off the real wire bits by the independent decoder -- not just echoed
+    # back from our own Python-side constant.
+    assert "05 01 09 02 A1 01" in report_desc_line
+
+    reports = _decode_custom(sr_path, pd, "report", decoder_id="usb_hid")
+    assert reports == [
+        "buttons=0x01 x=10 y=-5",
+        "buttons=0x00 x=-20 y=20",
+    ]
+
+    assert _decode_custom(sr_path, pd, "warning", decoder_id="usb_hid") == []
+
+
+def test_usb_msc_roundtrips_through_custom_sigrok_decoder(tmp_path):
+    """No mainline sigrok decoder exists for USB Mass Storage (confirmed:
+    only usb_packet/usb_request/usb_signalling/usb_power_delivery ship
+    under /usr/share/libsigrokdecode/decoders/) — validated instead
+    against a decoder this project wrote itself
+    (tests/custom_decoders/usb_msc/pd.py), stacked on the mainline
+    usb_packet decoder exactly like the real usb_request decoder is
+    (single-oracle tier, deliberately, per CLAUDE.md's oracle-tier
+    discussion for USB app-layer protocols with no cheaper option and no
+    cheap independent second oracle worth building).
+    """
+
+    config = Config(
+        samplerate=96_000_000,
+        protocols=[
+            {"id": "usb0", "type": "usb", "operations": []},
+            {
+                "id": "msc0", "type": "usb_msc", "stack_on": "usb0",
+                "operations": [
+                    {"op": "scsi_inquiry", "address": 5, "vendor": "PWGEN", "product": "SyntheticDisk"},
+                    {"op": "scsi_read_capacity10", "address": 5, "last_lba": 2047, "block_size": 512},
+                    {"op": "scsi_test_unit_ready", "address": 5},
+                ],
+            },
+        ],
+        outputs=[],
+    )
+    sr_path = tmp_path / "usb_msc.sr"
+    _write_sr(config, sr_path)
+
+    # usb_msc is the last decoder in the stack, so decoder_id must be given
+    # explicitly (`_decode_custom`'s own default is the *first* decoder in
+    # `pd_spec`, `usb_signalling`) — same reasoning the file's own
+    # `_decode()` docstring gives for a stacked spec like "i2c:...,lm75".
+    pd = "usb_signalling:dp=usb0.dp:dm=usb0.dm:signalling=full-speed,usb_packet,usb_msc"
+
+    cbw = _decode_custom(sr_path, pd, "cbw", decoder_id="usb_msc")
+    assert len(cbw) == 3
+    assert cbw[0] == "CBW tag=1 dir=IN lun=0 len=36"
+    assert cbw[1] == "CBW tag=2 dir=IN lun=0 len=8"
+    assert cbw[2] == "CBW tag=3 dir=IN lun=0 len=0"
+
+    inquiry = _decode_custom(sr_path, pd, "inquiry", decoder_id="usb_msc")
+    assert inquiry == ["INQUIRY alloc_len=36 vendor='PWGEN' product='SyntheticDisk'"]
+
+    read_cap = _decode_custom(sr_path, pd, "read-capacity", decoder_id="usb_msc")
+    assert read_cap == ["READ CAPACITY(10) last_lba=2047 block_size=512"]
+
+    tur = _decode_custom(sr_path, pd, "test-unit-ready", decoder_id="usb_msc")
+    assert tur == ["TEST UNIT READY"]
+
+    csw = _decode_custom(sr_path, pd, "csw", decoder_id="usb_msc")
+    assert len(csw) == 3
+    assert all("status=PASS" in line for line in csw)
+    assert csw[0].startswith("CSW tag=1 ")
+    assert csw[1].startswith("CSW tag=2 ")
+    assert csw[2].startswith("CSW tag=3 ")
+
+    assert _decode_custom(sr_path, pd, "warning", decoder_id="usb_msc") == []

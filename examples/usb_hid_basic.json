@@ -1,0 +1,21 @@
+{
+  "samplerate": 192000000,
+  "protocols": [
+    { "id": "usb0", "type": "usb", "operations": [] },
+    {
+      "id": "usb_hid0", "type": "usb_hid", "stack_on": "usb0",
+      "operations": [
+        { "op": "get_hid_descriptor", "address": 5, "endpoint": 0 },
+        { "op": "get_report_descriptor", "address": 5, "endpoint": 0 },
+        { "op": "send_report", "buttons": 1, "x": 10, "y": -5, "address": 5, "endpoint": 1 },
+        { "op": "send_report", "buttons": 0, "x": -20, "y": 20, "address": 5, "endpoint": 1 },
+        { "op": "send_report", "buttons": 2, "x": 0, "y": 0, "address": 5, "endpoint": 1 }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/usb_hid_basic.svg" },
+    { "type": "sigrok", "path": "output/usb_hid_basic.sr" },
+    { "type": "vcd", "path": "output/usb_hid_basic.vcd" }
+  ]
+}
