@@ -39,6 +39,8 @@ _KNOWN_AMBIGUOUS = {
     ("UartTransport", "send"),
     ("SpiBus", "wide_transfer"),
     ("I2CBus", "write_then_read"),
+    ("IrdaBus", "send_frame"),      # info coexists with control/command/final
+    ("IrdaBus", "send_i_frame"),    # info coexists with ns/nr/command/final
 }
 
 

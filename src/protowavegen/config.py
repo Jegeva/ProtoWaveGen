@@ -12,7 +12,7 @@ _FORMAT_EXTENSIONS = {"svg": "svg", "sigrok": "sr", "vcd": "vcd"}
 _PAYLOAD_FIELDS = {
     "data", "values", "mosi", "miso", "write_data", "read_data",
     "bits", "mosi_bits", "read_bits", "command", "answer", "byte",
-    "DALI_ADDRESS", "facility_code", "card_number", "patterns",
+    "DALI_ADDRESS", "facility_code", "card_number", "patterns", "info",
     "setup_data", "in_data", "out_data",
     # NOTE: plain "address" is deliberately NOT included — I2C's write/read
     # operations already use it as the (non-payload) slave-address field,

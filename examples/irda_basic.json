@@ -1,0 +1,19 @@
+{
+  "samplerate": 10000000,
+  "protocols": [
+    {
+      "id": "ir0", "type": "irda",
+      "params": { "baudrate": 115200 },
+      "operations": [
+        { "op": "send_xid", "source_address": 305419896 },
+        { "op": "send_i_frame", "address": 1, "ns": 0, "nr": 0, "info": "Hi", "datatype": "text" },
+        { "op": "send_i_frame", "address": 1, "ns": 1, "nr": 0, "info": "Ho", "datatype": "text", "final": false }
+      ]
+    }
+  ],
+  "outputs": [
+    { "type": "svg", "path": "output/irda_basic.svg" },
+    { "type": "sigrok", "path": "output/irda_basic.sr" },
+    { "type": "vcd", "path": "output/irda_basic.vcd" }
+  ]
+}
