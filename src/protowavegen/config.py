@@ -164,6 +164,46 @@ def _resolve_data_target(protocols: list[dict], target: str | None) -> tuple[int
             raise ValueError(
                 f"--data-target: unrecognized field {field!r} (expected one of {sorted(_PAYLOAD_FIELDS)})"
             )
+        # `field` being in the tool-wide _PAYLOAD_FIELDS set only means SOME
+        # protocol somewhere uses that name for a real payload field (e.g.
+        # DALI's `command`) -- it does NOT mean the *target* operation's own
+        # `field` kwarg is that same kind of thing. A field name can
+        # coincidentally collide (IrDA's `command` is a plain bool; RC-5/
+        # NEC/RC-6's `command` is an IR command code, neither a byte-array)
+        # while the target method still happens to expose an unrelated
+        # `datatype` kwarg (meant for a different field on the same
+        # operation) that would otherwise let this slip through unnoticed
+        # and silently corrupt that unrelated field with a list, crashing
+        # confusingly deep inside protocol logic instead of erroring here
+        # (found this exact shape via `--data-int` on IrDA's `command`
+        # while rewriting its end-user docs this session). Guard against it
+        # by requiring `field` be a real parameter of the target method too
+        # -- same signature-introspection `_resolve_set_target` already
+        # does for `--set`.
+        cls = get_protocol_class(protocols[p_idx]["type"])
+        op_name = operations[op_index].get("op", "?")
+        method = getattr(cls, op_name, None)
+        if method is None:
+            raise ValueError(f"--data-target: {cls.__name__} has no operation {op_name!r}")
+        sig_params = inspect.signature(method).parameters
+        real_params = [p for p in sig_params if p not in ("self", "builder")]
+        if field not in real_params:
+            raise ValueError(
+                f"--data-target: {cls.__name__}.{op_name}() has no parameter {field!r} "
+                f"(real parameters: {sorted(real_params)})"
+            )
+        # A real parameter can still be the wrong *kind* of thing despite
+        # sharing a `_PAYLOAD_FIELDS` name: IrDA's `command`/`final` are
+        # plain `bool` flags (the frame's C/R and P/F bits), not byte
+        # arrays -- `--data-*` datatype conversion can never sanely produce
+        # a bool, so a `bool`-annotated field is rejected outright rather
+        # than silently corrupting it with a list and crashing confusingly
+        # deep inside protocol logic (the exact failure this replaces).
+        if sig_params[field].annotation in (bool, "bool"):
+            raise ValueError(
+                f"--data-target: {cls.__name__}.{op_name}()'s {field!r} is a boolean flag, not a "
+                f"payload field -- use --set {protocols[p_idx]['id']}:{op_index}:{field}=true|false instead"
+            )
         return p_idx, op_index, field
 
     op_fields = [f for f in operations[op_index] if f in _PAYLOAD_FIELDS]

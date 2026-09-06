@@ -776,3 +776,45 @@ def test_data_int_on_single_byte_operation_field_does_not_crash(tmp_path, config
     from protowavegen.main import main
 
     assert main(["--config", config, "--data-int", target, "--format", "svg", "--output-dir", str(tmp_path)]) == 0
+
+
+def test_data_target_rejects_unrelated_field_that_happens_to_share_a_payload_field_name():
+    """Regression test for a real bug found while rewriting IrDA's
+    end-user docs this session: `field in _PAYLOAD_FIELDS` only proves
+    SOME protocol somewhere uses that name for a real payload field (e.g.
+    DALI's `command`) -- it doesn't prove the *target* operation's own
+    `command` kwarg is that kind of thing. IrDA's `send_i_frame` has a
+    `command: bool` parameter (the frame's C/R bit) that collides with
+    DALI's unrelated byte-payload `command` field name, and the method
+    also happens to expose a generic `datatype` kwarg (meant for `info`)
+    -- before this was fixed, --data-target silently accepted `command`
+    as if it were a real payload field, then crashed confusingly deep
+    inside crc16_x25 instead of raising a clear error here."""
+
+    from protowavegen.config import resolve_config
+    from protowavegen.main import build_arg_parser
+
+    config = {
+        "samplerate": 10_000_000,
+        "protocols": [
+            {
+                "id": "ir0", "type": "irda", "params": {"baudrate": 115200},
+                "operations": [
+                    {"op": "send_i_frame", "address": 1, "ns": 0, "nr": 0, "info": "Hi", "datatype": "text"},
+                ],
+            },
+        ],
+        "outputs": [],
+    }
+    args = build_arg_parser().parse_args(["--config", "unused.json", "--data-int", "ir0:0:command:1"])
+    with pytest.raises(ValueError, match="boolean flag, not a payload field"):
+        resolve_config(config, args)
+
+
+def test_data_target_rejects_field_name_the_target_method_does_not_have():
+    from protowavegen.config import resolve_config
+    from protowavegen.main import build_arg_parser
+
+    args = build_arg_parser().parse_args(["--config", "unused.json", "--data-hex", "i2c0:0:answer:01"])
+    with pytest.raises(ValueError, match="has no parameter 'answer'"):
+        resolve_config(_i2c_config(), args)
