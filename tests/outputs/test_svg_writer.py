@@ -165,3 +165,90 @@ def test_verbose_prefers_summary_over_label_when_it_fits(tmp_path):
     plain_texts = _texts(plain_path)
     assert "addr" in plain_texts
     assert "ADDR=0x48 W" not in plain_texts
+
+
+_DENSE_BYTE_COUNT = 40
+
+
+def _dense_capture():
+    """40 short annotated bytes packed tightly enough that even a fairly
+    narrow single-row render would draw each one far under any legible
+    width -- forces multi-row layout."""
+
+    b = CaptureBuilder(samplerate=1_000_000)
+    b.register_signal(Signal("a"))
+    for i in range(_DENSE_BYTE_COUNT):
+        b.advance(20)
+        b.annotate("field", f"0x{i:02X}", start=i * 20, end=i * 20 + 20)
+    return b.finish()
+
+
+def test_already_legible_capture_stays_single_row(tmp_path):
+    """A short, sparse capture must render byte-for-byte the same way as
+    before multi-row support existed -- no row header, one lane block."""
+
+    b = CaptureBuilder(samplerate=1000)
+    b.register_signal(Signal("a"))
+    b.advance(50)
+    b.annotate("field", "address", start=0, end=50)
+    b.advance(50)
+    b.annotate("field", "data", start=50, end=100)
+    capture = b.finish()
+
+    path = tmp_path / "out.svg"
+    SVGWriter().write(capture, path)
+    texts = _texts(path)
+    assert not any(t and t.startswith("chunk") for t in texts)
+
+
+def test_dense_capture_splits_into_multiple_rows(tmp_path):
+    capture = _dense_capture()
+    path = tmp_path / "out.svg"
+    SVGWriter().write(capture, path, target_width=300)
+    texts = _texts(path)
+
+    chunk_headers = [t for t in texts if t and t.startswith("chunk")]
+    assert len(chunk_headers) > 1
+    # every byte's label still appears exactly once across the whole image
+    for i in range(_DENSE_BYTE_COUNT):
+        assert texts.count(f"0x{i:02X}") == 1
+
+
+def test_multirow_annotation_widths_meet_the_legibility_floor(tmp_path):
+    capture = _dense_capture()
+    path = tmp_path / "out.svg"
+    SVGWriter().write(capture, path, target_width=300, min_feature_px=6.0)
+
+    field_rects = [
+        r for r in _rects(path)
+        if r.get("height") == str(24 - 4)  # annotation_lane_height - 4, the field-lane rect height
+    ]
+    assert field_rects
+    for r in field_rects:
+        assert float(r.get("width")) >= 6.0 - 1e-6
+
+
+def test_multirow_never_produces_an_unallocated_legend_color(tmp_path):
+    """Regression test: a row boundary landing inside a long annotation
+    must classify text-fit/overflow using the annotation's full width
+    (matching the global legend pass), not the row-clipped width -- a
+    mismatch there raised a raw KeyError on the legend dict, found while
+    tuning this feature against real usb_dfu/wiegand example captures."""
+
+    b = CaptureBuilder(samplerate=1000)
+    b.register_signal(Signal("a"))
+    b.advance(1000)
+    long_label = "this-label-is-long-enough-to-overflow-a-narrow-slot"
+    # Starts at sample 1 (not 0) so `_constant_value` doesn't collapse this
+    # into a static note (it requires full [0, duration) coverage) -- a
+    # real lane is what actually reproduced the original bug, mirroring
+    # Wiegand's own single frame-spanning "FC=.. CARD=.." annotation.
+    b.annotate("field", long_label, start=1, end=1000)
+    capture = b.finish()
+
+    path = tmp_path / "out.svg"
+    # Force multi-row despite there being only one annotation to cut
+    # through, by demanding a very fine feature resolution.
+    SVGWriter().write(capture, path, target_width=300, min_feature_px=50.0)
+    texts = _texts(path)
+    assert texts.count(long_label) == 1  # drawn once, in its starting row
