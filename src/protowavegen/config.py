@@ -252,22 +252,32 @@ def _resolve_set_target(protocols: list[dict], target: str) -> tuple[int, int, s
             f"(has {len(operations)} operation(s))"
         )
 
-    if field in _PAYLOAD_FIELDS:
-        raise ValueError(
-            f"--set: {field!r} is a payload (byte-array) field, not a scalar — use "
-            f"--data-hex/--data-string/--data-int/--data-bin/--data-bits/--data-file instead"
-        )
-
     cls = get_protocol_class(protocols[p_idx]["type"])
     op_name = operations[op_index].get("op", "?")
     method = getattr(cls, op_name, None)
     if method is None:
         raise ValueError(f"--set: {cls.__name__} has no operation {op_name!r}")
-    real_params = [p for p in inspect.signature(method).parameters if p not in ("self", "builder")]
+    sig_params = inspect.signature(method).parameters
+    real_params = [p for p in sig_params if p not in ("self", "builder")]
     if field not in real_params:
         raise ValueError(
             f"--set: {cls.__name__}.{op_name}() has no parameter {field!r} "
             f"(real parameters: {sorted(real_params)})"
+        )
+
+    # `field in _PAYLOAD_FIELDS` only proves SOME protocol somewhere uses
+    # that name for a real byte-array field (e.g. DALI's `command`) -- it
+    # doesn't prove *this* method's same-named parameter is that kind of
+    # thing. IrDA's `send_i_frame` has a `command: bool` (the frame's C/R
+    # bit) that collides with DALI's unrelated field name; rejecting it
+    # here just because of the name match would make it unreachable by
+    # EITHER flag (`--data-*` already correctly refuses it as non-payload
+    # in `_resolve_data_target`) -- so a bool-annotated field is exempted
+    # from this rejection and allowed through as the scalar it actually is.
+    if field in _PAYLOAD_FIELDS and sig_params[field].annotation not in (bool, "bool"):
+        raise ValueError(
+            f"--set: {field!r} is a payload (byte-array) field, not a scalar — use "
+            f"--data-hex/--data-string/--data-int/--data-bin/--data-bits/--data-file instead"
         )
 
     return p_idx, op_index, field

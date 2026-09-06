@@ -818,3 +818,53 @@ def test_data_target_rejects_field_name_the_target_method_does_not_have():
     args = build_arg_parser().parse_args(["--config", "unused.json", "--data-hex", "i2c0:0:answer:01"])
     with pytest.raises(ValueError, match="has no parameter 'answer'"):
         resolve_config(_i2c_config(), args)
+
+
+def _irda_config():
+    return {
+        "samplerate": 10_000_000,
+        "protocols": [
+            {
+                "id": "ir0", "type": "irda", "params": {"baudrate": 115200},
+                "operations": [
+                    {"op": "send_i_frame", "address": 1, "ns": 0, "nr": 0, "info": "Hi", "datatype": "text"},
+                ],
+            },
+        ],
+        "outputs": [],
+    }
+
+
+def test_set_allows_a_bool_field_that_shares_a_name_with_payload_fields():
+    """Mirror-image regression test: a field name colliding with the
+    global _PAYLOAD_FIELDS set (IrDA's `command: bool`, DALI's own
+    `command` is a real byte payload) must still be reachable via --set
+    on the protocol where it's genuinely a scalar, not rejected just
+    because the name matches somewhere else."""
+
+    from protowavegen.config import resolve_config
+    from protowavegen.main import build_arg_parser
+
+    args = build_arg_parser().parse_args(["--config", "unused.json", "--set", "ir0:0:command=false"])
+    resolved = resolve_config(_irda_config(), args)
+    assert resolved.protocols[0]["operations"][0]["command"] is False
+
+
+def test_set_still_rejects_a_genuine_payload_field_with_the_same_name():
+    from protowavegen.config import resolve_config
+    from protowavegen.main import build_arg_parser
+
+    config = {
+        "samplerate": 12_000,
+        "protocols": [
+            {
+                "id": "dali0", "type": "dali", "operations": [
+                    {"op": "send_forward_frame", "DALI_ADDRESS": 0, "command": 5},
+                ],
+            },
+        ],
+        "outputs": [],
+    }
+    args = build_arg_parser().parse_args(["--config", "unused.json", "--set", "dali0:0:command=5"])
+    with pytest.raises(ValueError, match="is a payload \\(byte-array\\) field"):
+        resolve_config(config, args)

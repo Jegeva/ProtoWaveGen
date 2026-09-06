@@ -129,45 +129,28 @@ accordingly:
 `ns`/`nr` (the N(S)/N(R) sequence numbers baked into the same Control
 byte) are reachable the same way, e.g. `--set "ir0:2:ns=3"`.
 
-### A CLI gap worth knowing: the `command` field
+### The `command` field: use `--set`, not `--data-*`
 
 Every `send_frame`-family method also takes a `command` parameter (the
 Address byte's C/R bit — `True` for a command frame, `False` for a
 response). It looks exactly as scalar as `final` above, but it collides
 with `protowavegen`'s own global "this field name is a byte-array payload
-everywhere" list (the same list that makes `data`/`info`/`bits` etc.
+somewhere" list (the same list that makes `data`/`info`/`bits` etc.
 recognizable to `--data-*` across every protocol) — `command` happens to
-be on it too, for unrelated protocols that really do use that name for a
-byte-array field. `--set` refuses it accordingly:
-
-```
-$ .venv/bin/python -m protowavegen --config examples/irda_basic.json --set "ir0:1:command=false"
-ValueError: --set: 'command' is a payload (byte-array) field, not a scalar — use --data-hex/--data-string/--data-int/--data-bin/--data-bits/--data-file instead
-```
-
-Unlike the DS2408 `bits` case documented in [the 1-Wire page](onewire.md),
-though, `--data-*` does **not** fail cleanly here — it actually runs,
-because `send_i_frame` happens to have a generic `datatype` kwarg on it
-already (there for `info`), so the CLI's "does this field have a sibling
-datatype parameter?" check passes even though that `datatype` kwarg has
-nothing to do with `command`:
+be on it too, for unrelated protocols (DALI) that really do use that name
+for a byte-array field. `--data-*` correctly refuses it:
 
 ```
 $ .venv/bin/python -m protowavegen --config examples/irda_basic.json --data-int "ir0:1:command:0"
-TypeError: unsupported operand type(s) for ^=: 'int' and 'str'
+ValueError: --data-target: IrdaBus.send_i_frame()'s 'command' is a boolean flag, not a payload
+field -- use --set ir0:1:command=true|false instead
 ```
 
-That's a real internal stack trace (from the FCS checksum computation
-several calls deep), not a clean user-facing error — `command` silently
-gets turned into a one-element list and passed through as if it were a
-byte array, which breaks well past the CLI's own validation. In short:
-**`command` isn't reachable from the CLI at all today**, and unlike most
-unreachable fields in this codebase it doesn't fail with a helpful
-message either. Changing it means editing the JSON directly, e.g.:
+`--set` is the right tool, same as `final`/`ns`/`nr` above:
 
-```diff
--        { "op": "send_i_frame", "address": 1, "ns": 0, "nr": 0, "info": "Hi", "datatype": "text" },
-+        { "op": "send_i_frame", "address": 1, "ns": 0, "nr": 0, "info": "Hi", "datatype": "text", "command": false },
+```bash
+.venv/bin/python -m protowavegen --config examples/irda_basic.json --format svg \
+    --set "ir0:1:command=false"
 ```
 
 ### When you still need to edit the JSON
