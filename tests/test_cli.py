@@ -754,3 +754,25 @@ def test_set_end_to_end_changes_generated_output(tmp_path):
         "--set", "can0:0:identifier=0x321",
     ]) == 0
     assert (out_baseline / "capture.sr").read_bytes() != (out_override / "capture.sr").read_bytes()
+
+
+@pytest.mark.parametrize(
+    "config,target",
+    [
+        ("examples/ps2_basic.json", "ps2_0:0:65"),
+        ("examples/dali_basic.json", "dali0:0:DALI_ADDRESS:2"),
+        ("examples/wiegand_basic.json", "wg0:0:facility_code:99"),
+    ],
+)
+def test_data_int_on_single_byte_operation_field_does_not_crash(tmp_path, config, target):
+    """Regression test for a real bug found independently three times
+    while rewriting DALI/PS-2/Wiegand's end-user docs this session:
+    --data-int always builds a list[int] for datatype="bytes", but these
+    protocols' single-byte fields (resolved via
+    payload.py::resolve_single_byte or wiegand.py's own
+    _resolve_card_field) expected a bare int and crashed with a raw,
+    unhandled TypeError instead of running or raising a clean ValueError."""
+
+    from protowavegen.main import main
+
+    assert main(["--config", config, "--data-int", target, "--format", "svg", "--output-dir", str(tmp_path)]) == 0

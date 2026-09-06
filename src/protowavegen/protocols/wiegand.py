@@ -85,9 +85,19 @@ class WiegandBus(TransportProtocol):
         `z`/`Z` auto-resolves), which must decode to exactly `width` bits —
         the byte-oriented `"hex"`/`"bin"`/`"text"` datatypes don't apply to
         a field this narrow, so they're rejected rather than silently
-        misinterpreted as a bit-string."""
+        misinterpreted as a bit-string. A single-element `list[int]` is
+        also accepted under `datatype="bytes"` and unwrapped: `--data-int`/
+        `--data-file` (`config.py::apply_data_override`) always build a
+        `list[int]` for `"bytes"` with no way to know this field is a bare
+        int rather than a real payload list — same fix as
+        `payload.py::resolve_single_byte`, which found this same bug shape
+        on DALI/PS-2's single-byte fields."""
 
         if datatype == "bytes":
+            if isinstance(value, list):
+                if len(value) != 1:
+                    raise ValueError(f"{name}: expected exactly one value, got {len(value)} from {value!r}")
+                value = value[0]
             if not (0 <= value < (1 << width)):
                 raise ValueError(f"{name} {value} does not fit in {width} bits")
             return [(value >> i) & 1 for i in reversed(range(width))], frozenset()

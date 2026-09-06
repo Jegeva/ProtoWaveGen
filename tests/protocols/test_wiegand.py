@@ -120,3 +120,24 @@ def test_send_card_26bit_plain_int_backward_compat_unaffected():
     wg.send_card_26bit(builder, facility_code=12, card_number=34567)
     capture = builder.finish()
     assert not any(a.label == "floating" for a in capture.annotations if a.track == "driver")
+
+
+def test_send_card_26bit_bytes_datatype_accepts_single_element_list():
+    """Regression test: `--data-int` (`config.py::apply_data_override`)
+    always builds a `list[int]` for `datatype="bytes"`, with no way to
+    know `facility_code`/`card_number` are historically bare ints rather
+    than a real payload list — this crashed with a raw TypeError in
+    `_resolve_card_field`'s range check before being fixed, found while
+    rewriting Wiegand's end-user docs this session."""
+
+    wg, builder = _setup()
+    wg.send_card_26bit(builder, facility_code=[12], card_number=[34567])
+    capture = builder.finish()
+    field = [a for a in capture.annotations if a.track == "field"][0]
+    assert field.data["facility_code"] == 12 and field.data["card_number"] == 34567
+
+
+def test_send_card_26bit_bytes_datatype_rejects_multi_element_list():
+    wg, builder = _setup()
+    with pytest.raises(ValueError, match="expected exactly one value"):
+        wg.send_card_26bit(builder, facility_code=[12, 13], card_number=34567)

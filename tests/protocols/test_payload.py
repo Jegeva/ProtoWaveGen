@@ -7,6 +7,7 @@ from protowavegen.protocols.payload import (
     decode_payload_with_floating,
     group_floating_by_byte,
     render_as_bin,
+    resolve_single_byte,
 )
 
 
@@ -185,3 +186,28 @@ def test_render_as_bin_substitutes_floating_positions_offset_by_prefix():
     # one fixed prefix byte (0xAA) shifts the payload's own byte_index=0 to
     # combined byte_index=1
     assert render_as_bin(payload, prefix_bytes=[0xAA]) == "10101010" + "0010hhhh"
+
+
+def test_resolve_single_byte_bytes_datatype_accepts_bare_int():
+    assert resolve_single_byte(65, "bytes") == (65, frozenset())
+
+
+def test_resolve_single_byte_bytes_datatype_accepts_single_element_list():
+    """Regression test: `--data-int`/`--data-file`
+    (`config.py::apply_data_override`) always build a `list[int]` for
+    `datatype="bytes"`, with no way to know a given field is historically
+    a bare int (DALI's address/command/answer, PS/2's byte) rather than a
+    real payload list — this crashed with a raw TypeError in
+    `bits_of_byte()` before being fixed, found independently while
+    rewriting DALI's, PS/2's, and Wiegand's end-user docs this session."""
+
+    assert resolve_single_byte([65], "bytes") == (65, frozenset())
+
+
+def test_resolve_single_byte_bytes_datatype_rejects_multi_element_list():
+    with pytest.raises(ValueError, match="expected exactly one byte"):
+        resolve_single_byte([65, 66], "bytes")
+
+
+def test_resolve_single_byte_hex_datatype_still_works():
+    assert resolve_single_byte("41", "hex") == (0x41, frozenset())

@@ -250,19 +250,29 @@ def group_floating_by_byte(floating: tuple[FloatingSpan, ...]) -> dict[int, froz
     return {byte_index: frozenset(bits) for byte_index, bits in grouped.items()}
 
 
-def resolve_single_byte(value: int, datatype: str, tristate: bool = False) -> tuple[int, frozenset[int]]:
+def resolve_single_byte(value: int | list[int], datatype: str, tristate: bool = False) -> tuple[int, frozenset[int]]:
     """For an operation field that's historically been a bare int
     (DALI's `address`/`command`/`answer`, PS/2's `byte`) rather than a
-    `list[int]` payload: `datatype="bytes"` (default) passes `value`
-    through unchanged (today's behavior, `value` is already a plain int,
-    not iterable the way `decode_payload`'s `"bytes"` branch expects) —
-    any other `datatype` treats `value` as a hex/bin/text string decoded
-    via `decode_payload_with_floating`, requiring it resolve to exactly one
-    byte. Returns `(resolved_byte, floating_bit_positions)` — the latter in
-    `FloatingSpan`'s MSB-first (0=MSB) convention, ready for a per-bit
-    `DriverTracker` loop."""
+    `list[int]` payload: `datatype="bytes"` (default) normally passes
+    `value` through unchanged (the hand-authored-JSON shape, a plain int).
+    But `--data-int`/`--data-file` (`config.py::apply_data_override`)
+    always build a `list[int]` for `"bytes"` regardless of which
+    resolution function the target field actually uses — they have no way
+    to know a given field is single-byte rather than a real payload list —
+    so a `list[int]` of length 1 is accepted here too and unwrapped,
+    rather than crashing downstream in `bits_of_byte()`'s int comparison
+    (confirmed a real bug this way: DALI/Wiegand/PS-2 all hit it via
+    `--data-int`). Any other `datatype` treats `value` as a hex/bin/text
+    string decoded via `decode_payload_with_floating`, requiring it
+    resolve to exactly one byte. Returns `(resolved_byte,
+    floating_bit_positions)` — the latter in `FloatingSpan`'s MSB-first
+    (0=MSB) convention, ready for a per-bit `DriverTracker` loop."""
 
     if datatype == "bytes":
+        if isinstance(value, list):
+            if len(value) != 1:
+                raise ValueError(f"expected exactly one byte, got {len(value)} from {value!r}")
+            value = value[0]
         return value, frozenset()
     payload = decode_payload_with_floating(value, datatype, tristate)
     if len(payload.values) != 1:
