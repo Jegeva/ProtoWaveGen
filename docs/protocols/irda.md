@@ -1,29 +1,230 @@
-# IrDA — `type: "irda"`
+# IrDA
 
-`irda.py`. IrDA SIR (Serial InfraRed) physical layer carrying IrLAP frames:
-one demodulated `ir` envelope line, active-low (idle/space = logic 1, a
-light pulse = logic 0 — matching every real IR receiver module's
-convention and this repo's `_ir_pulse.py`, even though SIR's own encoding
-shape is unrelated to that module's mark-space/biphase primitives). Not the
-consumer-remote protocols in `ir_rc5.py`/`ir_nec.py`/`ir_rc6.py` — IrDA is a
-genuine serial data link (old phones/PDAs/laptops/printers, IrOBEX/IrCOMM
-file transfer), standardized by the Infrared Data Association.
+Back to [usage overview](../USAGE.md).
 
-**v1 scope: SIR only** (up to 115.2kbit/s) — MIR/FIR (0.576/4+ Mbit/s) use
-fundamentally different encodings and aren't implemented. sigrok itself has
-no IrDA decoder at any layer, so this protocol is validated two ways
-instead of the usual single sigrok round-trip (see "Validation" below).
+## What this is
 
-## Physical layer (SIR)
+IrDA (Infrared Data Association) is the short-range, line-of-sight
+infrared data link that used to be built into laptops, PDAs, phones, and
+printers before Bluetooth/Wi-Fi took over — the little dark window you'd
+line two devices up against to beam a file across. This page models its
+**SIR** physical layer (Serial InfraRed, up to 115.2kbit/s — the common
+case; the faster MIR/FIR modes use different encodings and aren't
+implemented) carrying real **IrLAP** link-layer frames on top: device
+addressing, frame sequence numbers, and a genuine CRC-16 checksum, the
+same as a real IrDA stack would produce. This is not the same thing as a
+TV/AC remote control — those (RC-5, NEC, RC-6, all also in this tool) are
+one-shot command pulses with no addressing or link-layer framing; IrDA is
+a genuine bidirectional serial data link.
 
-Confirmed against IrDA's own physical-layer spec summaries: a logic 0 is a
-brief light pulse (nominally 3/16 of the bit period, at the *start* of the
-bit cell), a logic 1 is no pulse for the whole cell. That "0 is pulsed"
-convention is exactly UART's own polarity (start bit = 0, idle/stop = 1),
-so byte framing is UART-shaped: 1 start bit (always 0), 8 data bits
-LSB-first, 1 stop bit (always 1), no parity.
+The output is a diagram (SVG) and/or a capture file (`.sr`/`.vcd`) you can
+open in PulseView, sigrok-cli, or GTKWave as if a logic analyzer had
+actually probed the demodulated IR receiver output.
 
-## IrLAP framing
+The signal (`ir`) is active-low, matching every real IR receiver module:
+idle (no light) reads as logic 1, and a light pulse reads as logic 0. A
+SIR bit cell encodes a `0` as a brief pulse (3/16 of the bit period) at
+the *start* of the cell, and a `1` as no pulse for the whole cell — exactly
+UART's own polarity (start bit low, idle/stop high), so each byte is
+framed the same way a UART byte is: 1 start bit, 8 data bits LSB-first, 1
+stop bit, no parity.
+
+sigrok has no IrDA decoder at any layer, so this protocol's correctness is
+checked two independent ways instead of the usual single sigrok
+round-trip: a custom sigrok decoder written for this project, and a real,
+independently-written dissector — `tshark`'s own `irlap` — fed a
+synthetic pcap built to match. Both are asserted to agree on the same
+decoded address/control/payload values. See the appendix for detail.
+
+## Quick start
+
+```bash
+.venv/bin/python -m protowavegen --config examples/irda_basic.json
+```
+
+This runs `examples/irda_basic.json` (shown in full in the appendix below)
+and writes `output/irda_basic.svg`/`.sr`/`.vcd` — a broadcast XID
+(discovery) frame, then two I-frames ("Hi" and "Ho") addressed to device
+`0x01`:
+
+![Baseline IrDA capture: XID discovery, then two I-frames](images/irda/baseline.svg)
+
+The example sends **three** frames back-to-back, not one, and that's
+deliberate: IrLAP has no explicit end-of-frame marker at the SIR
+byte-stream level (unlike synchronous HDLC's `0x7E` flag byte) — a real
+receiver infers "frame's over" purely from a long-enough silence, and this
+tool's own custom decoder does the same. The gap this tool always leaves
+before/after the real activity in a capture (2% idle margin) isn't quite
+long enough for the decoder's own frame-end timeout, but the protocol's
+guaranteed 16-bit-period gap *between* frames comfortably is — so a
+second frame's mere presence flushes the decode of the first. Sending a
+single isolated frame doesn't reliably decode; sending two or more does.
+
+## What you can customize
+
+Without touching the JSON at all, the CLI can change:
+- **Which device a frame is addressed to** (`address` on `send_i_frame`/
+  `send_xid`) — via `--set`.
+- **The data being sent** (`info` on `send_i_frame`) — via
+  `--data-hex`/`--data-string`/`--data-int`/etc.
+- **Frame sequence numbers and the Poll/Final flag** (`ns`/`nr`/`final`) —
+  also plain scalars, reachable via `--set`.
+- **The baud rate** (`baudrate`) is a constructor param, not an operation
+  field, so it needs a JSON edit (see below).
+
+## Recipes — customizing via the CLI
+
+### Changing which device a frame targets
+
+`address` is a plain field on `send_i_frame`/`send_xid` (not a constructor
+param — a real IrLAP station can address any device it's discovered), so
+`--set` reaches it directly. This overrides both I-frames' address from
+`0x01` to `0x05` — simulating the exact same conversation with a different
+device on the far end:
+
+```bash
+.venv/bin/python -m protowavegen --config examples/irda_basic.json --format svg \
+    --set "ir0:1:address=5" --set "ir0:2:address=5"
+```
+
+![IrDA capture with both I-frames re-addressed to device 0x05](images/irda/address_override.svg)
+
+### Changing the payload
+
+`send_i_frame`'s `info` field takes the usual datatype treatment. Since
+the example config has two I-frames (both carrying `info`), an untargeted
+`--data-string` is rejected as ambiguous, listing both candidates so the
+right one can be copied straight into the command:
+
+```
+$ .venv/bin/python -m protowavegen --config examples/irda_basic.json --data-string "Hey"
+ValueError: multiple data-carrying operations found (ir0:1:info (op=send_i_frame), ir0:2:info (op=send_i_frame)); specify which one with --data-target protocol_id:op_index[:field]
+```
+
+Targeting the first I-frame explicitly works fine:
+
+```bash
+.venv/bin/python -m protowavegen --config examples/irda_basic.json --format svg \
+    --data-string "ir0:1:Hello"
+```
+
+![IrDA capture with the first I-frame's payload changed to "Hello"](images/irda/data_override.svg)
+
+### Changing the Poll/Final flag
+
+`final` is a plain boolean scalar operation field on every `send_frame`-
+family method — flip the example's second I-frame (sent with
+`"final": false` in the JSON) to `true`:
+
+```bash
+.venv/bin/python -m protowavegen --config examples/irda_basic.json --format svg \
+    --set "ir0:2:final=true"
+```
+
+The Control byte's P/F bit (and its `CTRL` field annotation) changes
+accordingly:
+
+![IrDA capture with the second I-frame's Final bit set](images/irda/final_override.svg)
+
+`ns`/`nr` (the N(S)/N(R) sequence numbers baked into the same Control
+byte) are reachable the same way, e.g. `--set "ir0:2:ns=3"`.
+
+### A CLI gap worth knowing: the `command` field
+
+Every `send_frame`-family method also takes a `command` parameter (the
+Address byte's C/R bit — `True` for a command frame, `False` for a
+response). It looks exactly as scalar as `final` above, but it collides
+with `protowavegen`'s own global "this field name is a byte-array payload
+everywhere" list (the same list that makes `data`/`info`/`bits` etc.
+recognizable to `--data-*` across every protocol) — `command` happens to
+be on it too, for unrelated protocols that really do use that name for a
+byte-array field. `--set` refuses it accordingly:
+
+```
+$ .venv/bin/python -m protowavegen --config examples/irda_basic.json --set "ir0:1:command=false"
+ValueError: --set: 'command' is a payload (byte-array) field, not a scalar — use --data-hex/--data-string/--data-int/--data-bin/--data-bits/--data-file instead
+```
+
+Unlike the DS2408 `bits` case documented in [the 1-Wire page](onewire.md),
+though, `--data-*` does **not** fail cleanly here — it actually runs,
+because `send_i_frame` happens to have a generic `datatype` kwarg on it
+already (there for `info`), so the CLI's "does this field have a sibling
+datatype parameter?" check passes even though that `datatype` kwarg has
+nothing to do with `command`:
+
+```
+$ .venv/bin/python -m protowavegen --config examples/irda_basic.json --data-int "ir0:1:command:0"
+TypeError: unsupported operand type(s) for ^=: 'int' and 'str'
+```
+
+That's a real internal stack trace (from the FCS checksum computation
+several calls deep), not a clean user-facing error — `command` silently
+gets turned into a one-element list and passed through as if it were a
+byte array, which breaks well past the CLI's own validation. In short:
+**`command` isn't reachable from the CLI at all today**, and unlike most
+unreachable fields in this codebase it doesn't fail with a helpful
+message either. Changing it means editing the JSON directly, e.g.:
+
+```diff
+-        { "op": "send_i_frame", "address": 1, "ns": 0, "nr": 0, "info": "Hi", "datatype": "text" },
++        { "op": "send_i_frame", "address": 1, "ns": 0, "nr": 0, "info": "Hi", "datatype": "text", "command": false },
+```
+
+### When you still need to edit the JSON
+
+`baudrate` is a constructor param, not an operation field — there's no
+operation for `--set` to target it on, confirmed by the actual error:
+
+```
+$ .venv/bin/python -m protowavegen --config examples/irda_basic.json --set "ir0:0:baudrate=9600"
+ValueError: --set: IrdaBus.send_xid() has no parameter 'baudrate' (real parameters: ['address', 'command', 'dest_address', 'discovery_flags', 'driver', 'final', 'slot', 'source_address', 'version'])
+```
+
+Changing the link speed means editing the config directly:
+
+```diff
+-      "params": { "baudrate": 115200 },
++      "params": { "baudrate": 9600 },
+```
+
+Similarly, the generic `send_frame` primitive's own `control` byte isn't
+exposed as a settable field on `send_i_frame`/`send_xid` (they compute it
+from `ns`/`nr`/the frame type instead) — confirmed the same way:
+
+```
+$ .venv/bin/python -m protowavegen --config examples/irda_basic.json --set "ir0:1:control=0x02"
+ValueError: --set: IrdaBus.send_i_frame() has no parameter 'control' (real parameters: ['address', 'command', 'datatype', 'driver', 'final', 'info', 'nr', 'ns'])
+```
+
+Using `send_frame` directly (with a hand-built `control` byte) instead of
+`send_i_frame`/`send_xid` is a JSON-level choice — adding or replacing an
+operation entirely is always outside what `--set`/`--data-*` can do.
+
+---
+
+## Appendix — operations reference
+
+`type: "irda"` — `IrdaBus`, `protocols/irda.py`. One signal, `ir`
+(active-low). SIR physical encoding only (up to 115.2kbit/s); MIR/FIR not
+implemented.
+
+### Constructor params
+
+```json
+"params": { "baudrate": 115200 }
+```
+
+- `baudrate` — SIR bit rate (default `115200`).
+
+### Physical layer (SIR)
+
+A logic `0` is a brief infrared light pulse (nominally 3/16 of the bit
+period, at the *start* of the bit cell); a logic `1` is no pulse for the
+whole cell. That "0 is pulsed" convention is exactly UART's own polarity
+(start bit = 0, idle/stop = 1), so byte framing is UART-shaped: 1 start
+bit (always 0), 8 data bits LSB-first, 1 stop bit (always 1), no parity.
+
+### IrLAP framing
 
 Every frame is Address (1 byte) + Control (1 byte) + optional Information
 + FCS (2 bytes, LSB first). There's no explicit end-of-frame delimiter at
@@ -44,29 +245,32 @@ enforces a minimum 16-bit-period gap before every `send_frame`/
   (now-removed) IrDA stack's magic-residue self-check value
   (`GOOD_FCS = 0xf0b8`).
 
-## Operations
+### Operations
 
-- `send_frame(address, control, info=None, datatype="bytes", command=True,
-  final=True, driver=None)`: the generic primitive — `control` must
-  **not** set bit 4 (the P/F bit) directly; pass `final=` instead.
-- `send_i_frame(address, ns, nr, info, datatype="bytes", command=True,
-  final=True, driver=None)`: an I-frame (data-carrying), building the
-  Control byte's N(S)/N(R)/frame-type bits automatically.
-- `send_xid(address=0x7F, source_address, dest_address=0xFFFFFFFF,
-  discovery_flags=0, slot=0xFF, version=0x00, command=True, final=True,
-  driver=None)`: an XID (eXchange station IDentification) command frame —
-  the U-frame IrLAP devices broadcast to discover each other. Chosen over
-  SNRM/UA connection setup because its Information field (Format
-  Identifier, Source/Destination Device Address, Discovery Flags, Slot
-  Number, Version Number — all little-endian) is fully public and simple
-  to get exactly right.
+- **`send_frame`** — `address`, `control`, `info=None`, `datatype="bytes"`,
+  `command=True`, `final=True`, `driver=None`. The generic primitive —
+  `control` must **not** set bit 4 (the P/F bit) directly; pass `final=`
+  instead.
+- **`send_i_frame`** — `address`, `ns`, `nr`, `info`, `datatype="bytes"`,
+  `command=True`, `final=True`, `driver=None`. An I-frame (data-carrying),
+  building the Control byte's N(S)/N(R)/frame-type bits automatically.
+- **`send_xid`** — `address=0x7F`, `source_address`,
+  `dest_address=0xFFFFFFFF`, `discovery_flags=0`, `slot=0xFF`,
+  `version=0x00`, `command=True`, `final=True`, `driver=None`. An XID
+  (eXchange station IDentification) command frame — the U-frame IrLAP
+  devices broadcast to discover each other. Chosen over SNRM/UA connection
+  setup because its Information field (Format Identifier, Source/
+  Destination Device Address, Discovery Flags, Slot Number, Version
+  Number — all little-endian) is fully public and simple to get exactly
+  right.
 
 `info`/`datatype` follow this codebase's usual floating-marker convention
 (`decode_payload_with_floating`, `tristate=False` — IrDA is a single-
 transmitter-at-a-time link with no protocol-defined pull, same reasoning
-as `dali.py`/the IR family).
+as `dali.py`/the IR remote-control family). See
+[the datatype/floating-marker guide](../USAGE.md#the-floating-bit-marker-system-lhz).
 
-## Validation
+### Validation
 
 sigrok has no IrDA decoder at any layer (confirmed: listed as a
 0%-complete future candidate on sigrok's own decoder wiki), so this
@@ -96,15 +300,7 @@ carries Address+Control+Information only; the `.sr` side (and the custom
 decoder validating it) still carries a real FCS on the wire, since a real
 transmitter always sends one.
 
-**Needs 2+ back-to-back frame calls for a clean custom-decoder decode**,
-same established shape as this repo's PS/2/LIN/DCF77/EM4100 round-trip
-cases: the default 2% trailing idle margin (`pad_idle`) isn't long enough
-for the custom decoder's own 12-bit-period idle timeout (needed to tell
-"next byte, same frame" from "frame ended" — the timeout must exceed the
-9-bit-period worst-case intra-frame silence bound, see `pd.py`'s module
-docstring), but the protocol's own 16-bit-period inter-frame gap comfortably
-clears it, so a second frame's mere presence (not its content) is what
-flushes the first.
+### Example — `examples/irda_basic.json`
 
 ```json
 {
