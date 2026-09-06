@@ -57,8 +57,7 @@ JSON if you want to see it decode cleanly through sigrok-cli yourself.
 
 Without touching the JSON at all, the CLI can change:
 - **The byte value being sent** (`byte`, on either `send_from_device` or
-  `send_to_host`) — via `--data-hex`/`--data-string`/`--data-bin` (see the
-  limitation below for why `--data-int`/`--data-file` don't work here).
+  `send_to_host`) — via any `--data-*` flag.
 - **Which bits of that byte are "floating"** rather than a driven `0`/`1`
   — via the same flags' `l`/`h`/`z` marker alphabet; `z` resolves high
   here since both `clock` and `data` are open-collector pull-up signals.
@@ -107,35 +106,18 @@ asserting this bit, the pull-up is just doing its job":
 
 ![PS/2 capture with the byte fully floating (resolves to 0xFF)](images/ps2/floating_override.svg)
 
-### A real CLI limitation: `--data-int`/`--data-file` don't work here
+### `--data-int` and `--data-file` work too
 
-`byte` looks like an ordinary payload field, and `--data-hex`/
-`--data-string`/`--data-bin` all work on it fine (as above) — but
-`--data-int` and `--data-file` genuinely crash:
+`byte` is a single scalar byte, not a `list[int]` payload — `Ps2Bus`'s
+operations call `resolve_single_byte()`, which (for the default
+`datatype="bytes"`) accepts either a bare `int` or a single-element list
+(the shape `--data-int`/`--data-file` always produce), so a plain decimal
+value works the same way as the hex/binary forms above:
 
-```
-$ .venv/bin/python -m protowavegen --config examples/ps2_basic.json --format svg \
+```bash
+.venv/bin/python -m protowavegen --config examples/ps2_basic.json --format svg \
     --data-int "ps2_0:0:65"
-Traceback (most recent call last):
-  ...
-  File ".../protowavegen/protocols/ps2.py", line 96, in send_from_device
-    bits = [0, *bits_of_byte(byte, "lsb"), self._odd_parity(byte), 1]
-  File ".../protowavegen/protocols/base.py", line 100, in bits_of_byte
-    if not (0 <= byte <= 0xFF):
-TypeError: '<=' not supported between instances of 'int' and 'list'
 ```
-
-The reason: PS/2's `byte` field is a single scalar byte, not a `list[int]`
-payload — `Ps2Bus`'s operations call `resolve_single_byte()`, which (for
-the default `datatype="bytes"`) expects a bare `int`. But `--data-int` and
-`--data-file` always build a `list[int]` (`_parse_data_int()`/
-`_load_data_file()` in `config.py`) and store it under `datatype="bytes"`
-unconditionally, regardless of what shape the target field actually wants.
-`--data-hex`/`--data-string`/`--data-bin` avoid this because they route
-through `decode_payload_with_floating()`, which `resolve_single_byte()`
-handles specially (it decodes the string and requires the result collapse
-to exactly one byte) rather than assuming a list. Until that's fixed,
-stick to `--data-hex`/`--data-string`/`--data-bin` for PS/2's `byte` field.
 
 ### When you still need to edit the JSON
 

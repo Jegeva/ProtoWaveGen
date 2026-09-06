@@ -45,7 +45,7 @@ frame replying `255`:
 Without touching the JSON at all, the CLI can change:
 - **The ballast address and command byte** in the forward frame
   (`DALI_ADDRESS`, `command`) — via `--data-hex`/`--data-string`/
-  `--data-bin`/etc. (see the caveat about `--data-int` below).
+  `--data-bin`/`--data-int`/etc.
 - **The reply byte** in the backward frame (`answer`) — same flags.
 
 There is **no genuine scalar field** anywhere in DALI's operations —
@@ -94,32 +94,16 @@ same way — here with a binary literal:
 
 ![DALI capture with the backward frame's reply changed to 0xCC](images/dali/answer_override.svg)
 
-### A genuine limitation: `--data-int` doesn't work here
+### `--data-int` also works, for a plain decimal value
 
-Every other `--data-*` flag works on DALI's fields, but `--data-int`
-crashes with a raw Python traceback instead of a clean error:
+`--data-hex`/`--data-string`/`--data-bin` are the natural fit for DALI's
+fields (floating markers, raw-byte escapes), but `--data-int` reaches them
+too, for a plain decimal byte value:
 
-```
-$ .venv/bin/python -m protowavegen --config examples/dali_basic.json \
+```bash
+.venv/bin/python -m protowavegen --config examples/dali_basic.json \
     --data-int "dali0:0:command:5"
-Traceback (most recent call last):
-  ...
-  File ".../protowavegen/protocols/dali.py", line 109, in send_forward_frame
-    cmd_bits = bits_of_byte(command)
-  File ".../protowavegen/protocols/base.py", line 100, in bits_of_byte
-    if not (0 <= byte <= 0xFF):
-TypeError: '<=' not supported between instances of 'int' and 'list'
 ```
-
-Why: `--data-int` always resolves under `datatype: "bytes"` and always
-produces a `list[int]` (even for a single value), but DALI's
-`DALI_ADDRESS`/`command`/`answer` are single-byte fields whose `"bytes"`
-datatype branch (`resolve_single_byte()`) expects a bare `int`, not a
-list — that mismatch is what the codebase's other `datatype="bytes"`
-fields never hit, since those are genuine byte-array fields expecting a
-list either way. Use `--data-hex`/`--data-string`/`--data-bin` instead (as
-in both recipes above) — anything that resolves under a datatype other
-than `"bytes"` goes through the single-byte decode path and works fine.
 
 ### Scalar fields and `--set`
 

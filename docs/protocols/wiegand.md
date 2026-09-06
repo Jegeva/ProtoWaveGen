@@ -47,9 +47,9 @@ Without touching the JSON at all, the CLI can change:
 - **The facility code and card number** on the standard 26-bit frame
   (`facility_code`/`card_number` on `send_card_26bit`) — the two fields an
   end user actually cares about when simulating "what if this reader saw a
-  different badge," reachable via `--data-bits` (see the recipes below —
-  the more obvious-looking `--data-int`/`--set` both turn out *not* to
-  work here, which is worth knowing before you reach for them).
+  different badge," reachable via `--data-int`/`--data-bits` (see the
+  recipes below — `--set` turns out *not* to work here, which is worth
+  knowing before you reach for it).
 - **Raw bit patterns**, if you're not using the 26-bit helper at all —
   the lower-level `send_bits` operation takes any flat sequence of 0/1
   bits (optionally with floating positions), useful for simulating a
@@ -74,24 +74,19 @@ ValueError: --set: 'facility_code' is a payload (byte-array) field, not a scalar
 --data-hex/--data-string/--data-int/--data-bin/--data-bits/--data-file instead
 ```
 
-The error message's own suggestion is half right: this genuinely is a
-`--data-*` field, but the obvious next guess — `--data-int`, since
-`facility_code` is "just a number" — doesn't work either. `send_card_26bit`
-expects `facility_code`'s default `"bytes"` datatype to mean *a single
-already-range-checked integer*, not the byte-array `--data-int` always
-produces, and the two disagree badly enough to crash outright instead of
-producing a clean error:
+The error message's own suggestion is right: this is a `--data-*` field.
+`--data-int` reaches it directly, since `facility_code`/`card_number`
+accept a plain integer under their default `"bytes"` datatype:
 
-```
-$ .venv/bin/python -m protowavegen --config examples/wiegand_basic.json --data-int "wg0:0:facility_code:99"
-TypeError: '<=' not supported between instances of 'int' and 'list'
+```bash
+.venv/bin/python -m protowavegen --config examples/wiegand_basic.json --format svg \
+    --data-int "wg0:0:facility_code:99"
 ```
 
-The field genuinely is reachable — just via `--data-bits`, since
-`facility_code`/`card_number` also each accept a `"bits"` datatype: an
-exact-width (8 bits here) string of `0`/`1` characters, decoded with the
-same floating-marker alphabet (`l/L/h/H/z/Z`) as everything else in this
-project:
+It's also reachable via `--data-bits`, since `facility_code`/`card_number`
+also each accept a `"bits"` datatype: an exact-width (8 bits here) string
+of `0`/`1` characters, decoded with the same floating-marker alphabet
+(`l/L/h/H/z/Z`) as everything else in this project:
 
 ```bash
 .venv/bin/python -m protowavegen --config examples/wiegand_basic.json --format svg \
@@ -187,9 +182,8 @@ defaults rather than a spec-mandated number.
   `l/L`/`h/H`/`z/Z` string instead, and parity is always computed over the
   already-resolved concrete bits, so a floating marker never affects
   parity correctness. Both fields are registered internally as payload
-  fields (not plain scalars), which is why `--set` refuses them and only
-  `--data-bits` (not `--data-int`/`--data-hex`/etc. — see the recipes
-  above) actually reaches them from the CLI.
+  fields (not plain scalars), which is why `--set` refuses them — reach
+  them via `--data-int` or `--data-bits` instead (see the recipes above).
 
 ### Example — `examples/wiegand_basic.json`
 
