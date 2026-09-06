@@ -2,44 +2,147 @@
 
 Back to [usage overview](../USAGE.md).
 
-`type: "usb_hid"` — `UsbHid`, `protocols/usb_hid.py`. A minimal USB Human
-Interface Device, stacked on `UsbBus` (`type: "usb"`). Scope is
-deliberately narrow, mirroring `spiflash.py`/`rtc8564.py`'s precedent of a
-real-but-narrow device subset rather than full HID spec coverage: a fixed
-3-byte relative-mouse report (buttons bitmap, signed X, signed Y, each
--127..127) plus `GET_DESCRIPTOR` requests for the HID and REPORT
-descriptor types.
+## What this is
 
-Out of scope: real report-descriptor *parsing* (the synthesized
-`REPORT_DESCRIPTOR` bytes are realistic but fixed, not driven by any
+USB HID (Human Interface Device) is the class every USB mouse, keyboard,
+and gamepad uses: a device describes its own report layout via a HID/
+REPORT descriptor, then the host polls it on an interrupt-IN endpoint and
+gets back small, fixed-size reports. This page generates a minimal but
+realistic HID mouse — the standard "buttons bitmap + signed relative X +
+signed relative Y" report shape most USB mice actually use — stacked on
+top of this project's [USB Full-Speed transport](usb.md) (`type: "usb"`).
+It models `GET_DESCRIPTOR` control transfers for the HID and REPORT
+descriptors, plus interrupt-IN mouse reports with a real DATA0/DATA1
+toggle, without any real hardware. The output is a diagram (SVG) and/or a
+capture file (`.sr`/`.vcd`) you can open in PulseView, sigrok-cli, or
+GTKWave as if a logic analyzer had actually probed D+/D-.
+
+Scope is deliberately narrow, the same "real but not exhaustive" precedent
+several other stacked devices in this project follow: a fixed 3-byte
+relative-mouse report, `GET_DESCRIPTOR` for the HID and REPORT descriptor
+types only. Out of scope: real report-descriptor *parsing* (the
+synthesized descriptor bytes are realistic but fixed, not driven by a
 user-supplied field layout), multiple report IDs, OUT reports,
 SET_IDLE/SET_PROTOCOL/SET_REPORT, and boot-protocol negotiation.
 
-No mainline sigrok decoder exists for USB HID (confirmed: only
-`usb_packet`/`usb_request`/`usb_signalling`/`usb_power_delivery` ship
-under `/usr/share/libsigrokdecode/decoders/`), so this is validated
-against a self-authored decoder instead — single-oracle tier, per the
-oracle-tier writeup in the repo's `CLAUDE.md` (a second/cross-checking
-oracle was already researched and ruled out as not worth it for USB
-app-layer protocols; see CLAUDE.md's USB HID/CDC/MSC/DFU discussion for
-why). The decoder (`tests/custom_decoders/usb_hid/pd.py`) stacks on
-sigrok's own mainline `usb_packet` decoder — the same
-`inputs = ['usb_packet']` mechanism `usb_request` itself uses — so the
-electrical (`usb_signalling`) and packet-framing (`usb_packet`) layers
-underneath are still real, independently-implemented sigrok code; only
-the HID-specific reassembly (control-transfer descriptor requests,
-interrupt-IN reports) is self-authored.
+No mainline sigrok decoder exists for USB HID, so this is validated
+against a self-authored decoder (`tests/custom_decoders/usb_hid/pd.py`)
+stacked on sigrok's own mainline `usb_packet` decoder — the electrical and
+packet-framing layers underneath are still real, independently
+implemented sigrok code; only the HID-specific reassembly (descriptor
+requests, interrupt-IN reports) is self-authored. See the repo's
+`CLAUDE.md` for the full oracle-tier rationale.
 
-## Constructor params
+## Quick start
+
+```bash
+.venv/bin/python -m protowavegen --config examples/usb_hid_basic.json
+```
+
+This runs `examples/usb_hid_basic.json` (shown in full in the appendix
+below) and writes `output/usb_hid_basic.svg`/`.sr`/`.vcd` — a device at
+USB address `5` answering `GET_DESCRIPTOR(HID)` and
+`GET_DESCRIPTOR(REPORT)` on endpoint 0, then three interrupt-IN mouse
+reports on endpoint 1 (a click-and-drag, a release-and-move, then a
+second click at rest):
+
+![Baseline USB HID capture: descriptor requests then three mouse reports](images/usb_hid/baseline.svg)
+
+## What you can customize
+
+Without touching the JSON at all, the CLI can change:
+- **Each mouse report's contents** — the `buttons` bitmap and the signed
+  `x`/`y` relative movement on any `send_report` operation — via `--set`.
+- **Which USB address a transfer targets** (`address` on any operation,
+  and `endpoint` too) — via `--set`.
+- **The HID/REPORT descriptor bytes themselves are not reachable at all**
+  — they're not JSON fields, they're a fixed `REPORT_DESCRIPTOR` byte
+  table hardcoded in `usb_hid.py`'s Python source, so changing them means
+  editing that file, not the config (see below).
+
+## Recipes — customizing via the CLI
+
+### Changing a mouse report's buttons/X/Y
+
+`send_report`'s `buttons`, `x`, and `y` are all plain scalar fields (not a
+byte-array payload), so `--set` reaches each of them directly. The example
+config's operation `2` (the first `send_report` call) starts as
+`buttons=1, x=10, y=-5`; overriding all three at once simulates a
+different click-and-drag gesture instead:
+
+```bash
+.venv/bin/python -m protowavegen --config examples/usb_hid_basic.json --format svg \
+    --set "usb_hid0:2:buttons=4" --set "usb_hid0:2:x=100" --set "usb_hid0:2:y=100"
+```
+
+The first report's summary annotation now reads
+`HID report buttons=0x04 x=100 y=100` — button 3 pressed, both axes
+moving in the positive direction — while the other two `send_report`
+calls later in the same operations list are untouched:
+
+![USB HID capture with the first mouse report's buttons/X/Y overridden](images/usb_hid/report_override.svg)
+
+`x`/`y` two's-complement-wrap into a byte the same way a real signed
+8-bit HID logical range does, so e.g. `--set "usb_hid0:3:x=-1"` encodes as
+`0xFF`, same as the JSON int form would.
+
+### Changing the target address
+
+Every operation (`get_hid_descriptor`, `get_report_descriptor`,
+`send_report`) takes `address` as a plain per-operation field, so `--set`
+retargets any of them independently — there's no single bus-wide "device
+address" constructor param the way some other transports have. Retargeting
+every operation in the example at once simulates the exact same enumerated
+device sitting at address `10` instead of `5`:
+
+```bash
+.venv/bin/python -m protowavegen --config examples/usb_hid_basic.json --format svg \
+    --set "usb_hid0:0:address=10" --set "usb_hid0:1:address=10" \
+    --set "usb_hid0:2:address=10" --set "usb_hid0:3:address=10" --set "usb_hid0:4:address=10"
+```
+
+Every token annotation (`SETUP ADDR=10 EP=0`, `IN ADDR=10 EP=1`, etc.)
+reflects the new address:
+
+![USB HID capture with every operation retargeted at address 10](images/usb_hid/address_override.svg)
+
+`endpoint` is the same kind of plain scalar field and takes the same
+treatment, e.g. `--set "usb_hid0:2:endpoint=3"`.
+
+### When you still need to edit the JSON — or the source
+
+Adding, removing, or reordering `send_report`/`get_*_descriptor`
+operations is a JSON edit, same as any other protocol here. But the HID
+and REPORT descriptor *contents* are a step further than that: they're
+not exposed as an operation field at all, so there's no payload to target
+with `--data-*` either. Trying anyway gets a clean rejection rather than
+a crash — `get_report_descriptor` (operation index `1`) really has no
+payload field to aim at:
+
+```
+$ .venv/bin/python -m protowavegen --config examples/usb_hid_basic.json --data-hex "usb_hid0:1:aabbcc"
+ValueError: --data-target: operation usb_hid0:1 has no payload field; specify one
+explicitly, one of [...]
+```
+
+The descriptor bytes come from `REPORT_DESCRIPTOR`, a fixed Python
+constant near the top of `src/protowavegen/protocols/usb_hid.py` (a
+realistic but fixed 3-button relative-mouse layout — Usage Page Generic
+Desktop/Mouse, a 3-bit button array padded to a byte, then signed 8-bit
+relative X/Y). Simulating a device with a different report layout means
+editing that constant in the source, not the JSON config or the CLI.
+
+---
+
+## Appendix — operations reference
+
+`type: "usb_hid"` — `UsbHid`, `protocols/usb_hid.py`. Stacked on `UsbBus`
+(`type: "usb"`, see [usb.md](usb.md)) — no constructor params of its own
+beyond `stack_on`, since all bit timing comes from the underlying bus:
 
 ```json
 "stack_on": "usb0"
 ```
-
-No params of its own beyond `stack_on` (pointing at a `type: "usb"` node)
-— all bit timing comes from the underlying `UsbBus`.
-
-## Operations
 
 - **`get_hid_descriptor`** — `address`, `endpoint=0`. A `GET_DESCRIPTOR`
   control transfer for the HID descriptor (`bmRequestType=0x81`
@@ -64,12 +167,14 @@ No params of its own beyond `stack_on` (pointing at a `type: "usb"` node)
   `I2CDevice`/`OneWireDevice` already use for their own addressing state
   on top of a shared transport.
 
+None of the three operations take a `datatype` field — none of them have
+a byte-array payload parameter at all (the descriptor bytes are fixed,
+and `send_report`'s `buttons`/`x`/`y` are plain scalar ints, not a list).
+
 Every operation wraps its packet sequence in one summary `field`
 annotation spanning the whole logical operation (`"GET_DESCRIPTOR(HID)"`,
 `"GET_DESCRIPTOR(REPORT)"`, or `"HID report buttons=0x.. x=.. y=.."`), in
 addition to `UsbBus`'s own per-packet/per-byte annotations.
-
-## Example — `examples/usb_hid_basic.json`
 
 ```json
 {
@@ -95,10 +200,6 @@ addition to `UsbBus`'s own per-packet/per-byte annotations.
 }
 ```
 
-```bash
-.venv/bin/python -m protowavegen --config examples/usb_hid_basic.json
-```
-
 Decode the generated `.sr` through the custom decoder (not part of the
 system `sigrok-cli` install), stacked on sigrok's own mainline
 `usb_signalling`/`usb_packet` decoders:
@@ -117,7 +218,7 @@ usb_hid-1: buttons=0x00 x=-20 y=20
 usb_hid-1: buttons=0x02 x=0 y=0
 ```
 
-## A real bug this feature found in `UsbBus` itself
+### A real bug this feature found in `UsbBus` itself
 
 Writing this decoder's unit tests surfaced a genuine pre-existing bug in
 `UsbBus._send_packet`'s role-tracking, unrelated to HID specifically:
